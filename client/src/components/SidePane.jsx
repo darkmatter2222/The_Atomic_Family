@@ -180,6 +180,15 @@ const STATE_LABELS = {
   idle: { text: 'Idle', color: '#4ADE80' },
   walking: { text: 'Walking', color: '#60A5FA' },
   choosing: { text: 'Thinking...', color: '#FBBF24' },
+  performing: { text: 'Busy', color: '#F472B6' },
+};
+
+const CATEGORY_COLORS = {
+  cooking: '#FF6B35', eating: '#4CAF50', hygiene: '#42A5F5',
+  chores: '#AB47BC', sleeping: '#3F51B5', entertainment: '#FFD600',
+  exercise: '#00C853', social: '#FF4081', relaxing: '#26C6DA',
+  education: '#FF9800', errand: '#8D6E63', hobby: '#7E57C2',
+  routine: '#78909C', transit: '#90A4AE',
 };
 
 function getRoomDisplayName(roomId) {
@@ -225,8 +234,43 @@ function PlayerPanel({ member }) {
 
       {/* Status Section */}
       <SectionHeader label="Status" />
-      <StatRow label="Current Activity" value={stateInfo.text} color={stateInfo.color} />
+      <StatRow label="Current State" value={stateInfo.text} color={stateInfo.color} />
       <StatRow label="Location" value={getRoomDisplayName(member.currentRoom)} color="#60A5FA" />
+
+      {/* ── Current Activity (interaction) ── */}
+      {member.activityLabel && (
+        <>
+          <div style={{ marginTop: 8, marginBottom: 4 }}>
+            <span style={{ color: '#888', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Activity</span>
+          </div>
+          <div style={{
+            padding: '8px 10px',
+            borderRadius: 6,
+            background: `${CATEGORY_COLORS[member.currentInteraction?.category] || '#555'}22`,
+            border: `1px solid ${CATEGORY_COLORS[member.currentInteraction?.category] || '#555'}44`,
+            marginBottom: 6,
+          }}>
+            <div style={{ fontWeight: 'bold', color: '#fff', fontSize: 13, marginBottom: 4 }}>
+              {member.activityLabel}
+            </div>
+            {member.currentInteraction && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <Badge text={member.currentInteraction.category} color={CATEGORY_COLORS[member.currentInteraction.category] || '#aaa'} />
+                <Badge text={member.activityAnim || 'idle'} color="#90A4AE" />
+              </div>
+            )}
+          </div>
+          {member.interactionDuration > 0 && (
+            <StatRow
+              label="Progress"
+              value={`${Math.floor((member.interactionTimer / member.interactionDuration) * 100)}%`}
+              bar={(member.interactionTimer / member.interactionDuration) * 100}
+              barColor={CATEGORY_COLORS[member.currentInteraction?.category] || '#4ADE80'}
+            />
+          )}
+        </>
+      )}
+
       <StatRow label="Walk Speed" value={`${member.walkSpeed.toFixed(1)} m/s`} />
       <StatRow label="Facing" value={member.facingRight ? '→ Right' : '← Left'} />
 

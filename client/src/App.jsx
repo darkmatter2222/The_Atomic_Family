@@ -228,14 +228,14 @@ function CompassIndicators() {
  * GameScene - Main 3D scene containing the house and characters.
  * Exposes live family state so the sidebar can track the selected player.
  */
-function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights }) {
+function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights, gameTime, firstPerson }) {
   const [family, setFamily] = useState(() => createFamily());
   const familyRef = useRef(family);
+  const gameTimeRef = useRef(gameTime);
 
-  // Keep ref in sync for non-React updates
-  useEffect(() => {
-    familyRef.current = family;
-  }, [family]);
+  // Keep refs in sync
+  useEffect(() => { familyRef.current = family; }, [family]);
+  useEffect(() => { gameTimeRef.current = gameTime; }, [gameTime]);
 
   // Notify parent of family updates so sidebar can live-track selected player
   useEffect(() => {
@@ -248,8 +248,12 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
     const effectiveSpeed = syncToReal ? 1 : timeSpeed;
     const dt = Math.min(delta, 0.1) * effectiveSpeed;
 
+    // Compute current game hour for interaction time-window checks
+    const gt = gameTimeRef.current;
+    const gameHour = gt ? (gt.getHours() + gt.getMinutes() / 60) : 12;
+
     setFamily(prev =>
-      prev.map(member => updateFamilyMember(member, dt))
+      prev.map(member => updateFamilyMember(member, dt, gameHour))
     );
   });
 
@@ -268,7 +272,7 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
       <CompassIndicators />
 
       {/* The House */}
-      <House3D onRoomHover={onRoomHover} onFurnitureHover={onFurnitureHover} onRoomClick={onRoomClick} onGroundClick={onGroundClick} visibility={visibility} roomLights={roomLights} />
+      <House3D onRoomHover={onRoomHover} onFurnitureHover={onFurnitureHover} onRoomClick={onRoomClick} onGroundClick={onGroundClick} visibility={visibility} roomLights={roomLights} firstPerson={firstPerson} />
 
       {/* Family Members */}
       {family.map(member => (
@@ -393,6 +397,19 @@ export default function App() {
   const [cameraLockOrientation, setCameraLockOrientation] = useState(false);
   const [firstPerson, setFirstPerson] = useState(false);
 
+  // Panel visibility (super menu)
+  const [panelVis, setPanelVis] = useState({
+    lightSwitches: true,
+    controls: true,
+    timeHud: true,
+    roomLegend: true,
+    sidePane: true,
+  });
+  const [superMenuOpen, setSuperMenuOpen] = useState(false);
+  const togglePanel = useCallback((key) => {
+    setPanelVis(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
   // Simulation / time-of-day state
   const [simPaused, setSimPaused] = useState(false);
   const [timeSpeed, setTimeSpeed] = useState(1);          // 1x, 10x, 100x, 1000x
@@ -503,22 +520,51 @@ export default function App() {
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      {/* Title overlay */}
+      {/* Title overlay with hamburger super menu */}
       <div style={{
         position: 'absolute',
         top: 20,
         left: 20,
-        zIndex: 10,
+        zIndex: 20,
         color: '#FFD700',
         fontFamily: '"Courier New", monospace',
         textShadow: '2px 2px 4px rgba(0,0,0,0.8)'
       }}>
-        <h1 style={{ fontSize: '28px', margin: 0, letterSpacing: '2px' }}>
-          THE ATOMIC FAMILY
-        </h1>
-        <p style={{ fontSize: '12px', color: '#aaa', marginTop: 4 }}>
-          Pixel Craft Simulation | Orbit: Drag | Zoom: Scroll | FP: WASD
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Hamburger button */}
+          <button
+            onClick={() => setSuperMenuOpen(p => !p)}
+            style={{
+              background: superMenuOpen ? 'rgba(255,215,0,0.2)' : 'rgba(0,0,0,0.6)',
+              border: superMenuOpen ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.2)',
+              borderRadius: 6,
+              padding: '6px 8px',
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
+              transition: 'all 0.15s ease',
+            }}
+            title="Toggle panels"
+          >
+            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
+            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
+            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
+          </button>
+          <div>
+            <h1 style={{ fontSize: '28px', margin: 0, letterSpacing: '2px' }}>
+              THE ATOMIC FAMILY
+            </h1>
+            <p style={{ fontSize: '12px', color: '#aaa', marginTop: 4, margin: 0 }}>
+              Pixel Craft Simulation | Orbit: Drag | Zoom: Scroll | FP: WASD
+            </p>
+          </div>
+        </div>
+
+        {/* Super menu dropdown */}
+        {superMenuOpen && (
+          <SuperMenuDropdown panelVis={panelVis} onToggle={togglePanel} />
+        )}
       </div>
 
       {/* Hovered room indicator */}
@@ -528,7 +574,7 @@ export default function App() {
       <FurnitureTooltip furniture={hoveredFurniture} />
 
       {/* Room legend */}
-      <RoomLegend hoveredRoom={hoveredRoom} />
+      {panelVis.roomLegend && <RoomLegend hoveredRoom={hoveredRoom} />}
 
       <Canvas
         shadows
@@ -562,6 +608,8 @@ export default function App() {
           onTimeUpdate={setGameTime}
           timeOverrideRef={timeOverrideRef}
           roomLights={roomLights}
+          gameTime={gameTime}
+          firstPerson={firstPerson}
         />
         {firstPerson ? (
           <FirstPersonController
@@ -598,43 +646,143 @@ export default function App() {
       )}
 
       {/* Time-of-day HUD (top right) */}
-      <TimeHUD
-        gameTime={gameTime}
-        timeSpeed={timeSpeed}
-        syncToReal={syncToReal}
-        paused={simPaused}
-        onSetTimeSpeed={(s) => { setTimeSpeed(s); setSyncToReal(false); }}
-        onToggleSyncReal={() => setSyncToReal(p => !p)}
-        onSetHour={(h) => { timeOverrideRef.current = h; setSyncToReal(false); }}
-        onTogglePaused={() => setSimPaused(p => !p)}
-      />
+      {panelVis.timeHud && (
+        <TimeHUD
+          gameTime={gameTime}
+          timeSpeed={timeSpeed}
+          syncToReal={syncToReal}
+          paused={simPaused}
+          onSetTimeSpeed={(s) => { setTimeSpeed(s); setSyncToReal(false); }}
+          onToggleSyncReal={() => setSyncToReal(p => !p)}
+          onSetHour={(h) => { timeOverrideRef.current = h; setSyncToReal(false); }}
+          onTogglePaused={() => setSimPaused(p => !p)}
+        />
+      )}
 
       {/* Light switches panel */}
-      <LightSwitchPanel
-        roomLights={roomLights}
-        onToggle={toggleRoomLight}
-        onAllOn={() => setAllLights(true)}
-        onAllOff={() => setAllLights(false)}
-        lightsAuto={lightsAuto}
-        onToggleAuto={() => setLightsAuto(p => !p)}
-      />
+      {panelVis.lightSwitches && (
+        <LightSwitchPanel
+          roomLights={roomLights}
+          onToggle={toggleRoomLight}
+          onAllOn={() => setAllLights(true)}
+          onAllOff={() => setAllLights(false)}
+          lightsAuto={lightsAuto}
+          onToggleAuto={() => setLightsAuto(p => !p)}
+        />
+      )}
 
       {/* Controls panel */}
-      <ControlsPanel
-        visibility={visibility}
-        onToggleVisibility={toggleVisibility}
-        cameraAutoRotate={cameraAutoRotate}
-        onToggleAutoRotate={() => setCameraAutoRotate(p => !p)}
-        cameraTopDown={cameraTopDown}
-        onToggleTopDown={() => { setCameraTopDown(p => !p); setFirstPerson(false); }}
-        cameraLockOrientation={cameraLockOrientation}
-        onToggleLockOrientation={() => setCameraLockOrientation(p => !p)}
-        firstPerson={firstPerson}
-        onToggleFirstPerson={() => { setFirstPerson(p => !p); setCameraTopDown(false); }}
-      />
+      {panelVis.controls && (
+        <ControlsPanel
+          visibility={visibility}
+          onToggleVisibility={toggleVisibility}
+          cameraAutoRotate={cameraAutoRotate}
+          onToggleAutoRotate={() => setCameraAutoRotate(p => !p)}
+          cameraTopDown={cameraTopDown}
+          onToggleTopDown={() => { setCameraTopDown(p => !p); setFirstPerson(false); }}
+          cameraLockOrientation={cameraLockOrientation}
+          onToggleLockOrientation={() => setCameraLockOrientation(p => !p)}
+          firstPerson={firstPerson}
+          onToggleFirstPerson={() => { setFirstPerson(p => !p); setCameraTopDown(false); }}
+        />
+      )}
 
       {/* Side Pane */}
-      <SidePane data={sidePaneData} onClose={handleCloseSidePane} />
+      {panelVis.sidePane && <SidePane data={sidePaneData} onClose={handleCloseSidePane} />}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+ *  SuperMenuDropdown – hamburger panel-visibility toggles
+ * ════════════════════════════════════════════════════════════════ */
+
+const PANEL_ITEMS = [
+  { key: 'timeHud',       label: 'Time HUD',       icon: '[T]' },
+  { key: 'lightSwitches', label: 'Light Switches',  icon: '[L]' },
+  { key: 'controls',      label: 'Controls',        icon: '[C]' },
+  { key: 'roomLegend',    label: 'Room Legend',      icon: '[R]' },
+  { key: 'sidePane',      label: 'Side Pane',       icon: '[S]' },
+];
+
+function SuperMenuDropdown({ panelVis, onToggle }) {
+  const allVisible = Object.values(panelVis).every(Boolean);
+  const noneVisible = Object.values(panelVis).every(v => !v);
+
+  const toggleAll = (on) => {
+    PANEL_ITEMS.forEach(p => {
+      if (panelVis[p.key] !== on) onToggle(p.key);
+    });
+  };
+
+  return (
+    <div style={{
+      marginTop: 8,
+      background: 'rgba(0,0,0,0.88)',
+      borderRadius: 8,
+      padding: '10px 14px',
+      minWidth: 190,
+      border: '1px solid rgba(255,215,0,0.25)',
+      backdropFilter: 'blur(8px)',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 'bold', color: '#FFD700', marginBottom: 6, letterSpacing: 1 }}>
+        PANELS
+      </div>
+
+      {/* Show All / Hide All */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <button
+          onClick={() => toggleAll(true)}
+          style={{
+            flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
+            fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
+            border: allVisible ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
+            background: allVisible ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
+            color: allVisible ? '#FFD700' : '#888', transition: 'all 0.15s ease',
+          }}
+        >Show All</button>
+        <button
+          onClick={() => toggleAll(false)}
+          style={{
+            flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
+            fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
+            border: noneVisible ? '1px solid #FF6347' : '1px solid rgba(255,255,255,0.15)',
+            background: noneVisible ? 'rgba(255,99,71,0.15)' : 'rgba(255,255,255,0.05)',
+            color: noneVisible ? '#FF6347' : '#888', transition: 'all 0.15s ease',
+          }}
+        >Hide All</button>
+      </div>
+
+      {/* Per-panel toggles */}
+      {PANEL_ITEMS.map(p => {
+        const on = panelVis[p.key];
+        return (
+          <button
+            key={p.key}
+            onClick={() => onToggle(p.key)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+              background: on ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.03)',
+              border: on ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 4, padding: '5px 10px', marginBottom: 3, cursor: 'pointer',
+              fontFamily: '"Courier New", monospace', fontSize: 12,
+              color: on ? '#4ADE80' : '#555', transition: 'all 0.15s ease',
+            }}
+          >
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 16, height: 16, borderRadius: 3,
+              background: on ? '#4ADE80' : 'transparent',
+              border: on ? '1px solid #4ADE80' : '1px solid #555',
+              color: on ? '#000' : '#555',
+              fontSize: 10, fontWeight: 'bold', transition: 'all 0.15s ease',
+            }}>{on ? '*' : ''}</span>
+            <span style={{ fontSize: 12, color: on ? '#aaa' : '#444' }}>{p.icon}</span>
+            <span>{p.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

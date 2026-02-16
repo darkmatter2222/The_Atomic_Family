@@ -242,7 +242,7 @@ export const HOUSE_LAYOUT = {
     { id: 'master_rug', label: 'Bedroom Rug', room: 'bedroom_master', position: { x: 5.5, y: 0, z: -4.5 }, size: { w: 3.5, h: 0.02, d: 3 }, color: '#6B5B4A' },
 
     // ═══════════════════ Bathroom ═══════════════════
-    { id: 'toilet', label: 'Toilet', room: 'bathroom', position: { x: 2.2, y: 0, z: 1.3 }, size: { w: 0.5, h: 0.6, d: 0.6 }, color: '#FFFFF0' },
+    { id: 'toilet', label: 'Toilet', room: 'bathroom', position: { x: 2.2, y: 0, z: 1.3 }, size: { w: 0.5, h: 0.6, d: 0.6 }, color: '#FFFFF0', rotationY: Math.PI },
     { id: 'shower', label: 'Shower', room: 'bathroom', position: { x: 4.2, y: 0, z: 1 }, size: { w: 1.2, h: 2.2, d: 1.2 }, color: '#E8E8E8' },
     { id: 'bath_sink', label: 'Bathroom Sink', room: 'bathroom', position: { x: 2.2, y: 0, z: -1.3 }, size: { w: 0.6, h: 0.9, d: 0.4 }, color: '#FFFFF0' },
     { id: 'bath_mirror', label: 'Mirror', room: 'bathroom', position: { x: 2.2, y: 1.2, z: -1.7 }, size: { w: 0.6, h: 0.8, d: 0.05 }, color: '#C0E8FF' },
@@ -422,8 +422,11 @@ export function createWalkableGrid(resolution = 2) {
   }
 
   // Mark furniture as obstacles (non-walkable) with a small buffer
+  // Skip flat items (rugs, mats, jump ropes, etc.) that are flush with the floor
   const buffer = 0.2;
+  const FLAT_THRESHOLD = 0.06; // items with h <= this are walkable
   for (const furn of layout.furniture) {
+    if (furn.size.h <= FLAT_THRESHOLD) continue; // skip rugs, mats, etc.
     const fMinX = furn.position.x - furn.size.w / 2 - buffer;
     const fMaxX = furn.position.x + furn.size.w / 2 + buffer;
     const fMinZ = furn.position.z - furn.size.d / 2 - buffer;

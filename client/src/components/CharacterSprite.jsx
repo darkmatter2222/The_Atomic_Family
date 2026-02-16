@@ -27,9 +27,53 @@ const NAME_TO_SPRITE = {
   'Jack': 'son'
 };
 
+/* ── Activity-animation colour coding (bubble background) ─── */
+const ACTIVITY_COLORS = {
+  cooking:       '#FF6B35',
+  eating:        '#4CAF50',
+  hygiene:       '#42A5F5',
+  chores:        '#AB47BC',
+  sleeping:      '#3F51B5',
+  entertainment: '#FFD600',
+  exercise:      '#00C853',
+  social:        '#FF4081',
+  relaxing:      '#26C6DA',
+  education:     '#FF9800',
+  errand:        '#8D6E63',
+  hobby:         '#7E57C2',
+  routine:       '#78909C',
+  transit:       '#90A4AE',
+};
+
+/* ── Emoji / icon per animation hint ─────────────────────── */
+const ACTIVITY_ICONS = {
+  sit:   '🪑',
+  sleep: '💤',
+  use:   '🔧',
+  walk:  '🚶',
+};
+
+/* ── Per-category emoji for richer activity bubble icons ── */
+const CATEGORY_ICONS = {
+  cooking:       '🍳',
+  eating:        '🍽️',
+  hygiene:       '🚿',
+  chores:        '🧹',
+  sleeping:      '💤',
+  entertainment: '🎬',
+  exercise:      '🏃',
+  social:        '💬',
+  relaxing:      '☕',
+  education:     '📚',
+  errand:        '🚗',
+  hobby:         '🎨',
+  routine:       '⚙️',
+  transit:       '🚶',
+};
+
 /**
  * CharacterSprite - A billboard sprite that renders pixel art from JSON data.
- * Always faces the camera. Animates walking frames when moving.
+ * Always faces the camera. Shows activity bubble when performing an interaction.
  */
 export default function CharacterSprite({ member, camera, onClick }) {
   const meshRef = useRef();
@@ -85,10 +129,40 @@ export default function CharacterSprite({ member, camera, onClick }) {
     if (onClick) onClick(member);
   };
 
+  const isPerforming = member.state === 'performing' && member.activityLabel;
+  const isSleeping = member.activityAnim === 'sleep';
+  const isSitting = member.activityAnim === 'sit';
+  const isUsing = member.activityAnim === 'use' && isPerforming;
+
+  // ── Pose transforms ──────────────────────────────────────
+  // Sleeping: flatten horizontally (lying down)
+  // Sitting: drop significantly + shrink (looks like they sat down)
+  // Using: slight forward lean
+  let yOffset = 0;
+  let scaleX = 1;
+  let scaleY = 1;
+
+  if (isSleeping) {
+    yOffset = -spriteHeight * 0.32;   // much lower — lying down
+    scaleX = 1.4;                     // wider (body stretched out)
+    scaleY = 0.4;                     // very flat
+  } else if (isSitting) {
+    yOffset = -spriteHeight * 0.22;   // substantial drop — clearly seated
+    scaleX = 1.05;                    // ever so slightly wider (relaxed)
+    scaleY = 0.72;                    // shorter = legs hidden by furniture
+  } else if (isUsing) {
+    yOffset = -spriteHeight * 0.03;   // tiny dip — slight lean forward
+    scaleY = 0.95;                    // subtle compression (reaching/bending)
+  }
+
   return (
-    <group position={[member.position.x, spriteHeight / 2, member.position.z]}>
-      <mesh ref={meshRef} onClick={handleClick} style={{ cursor: 'pointer' }}>
-        <planeGeometry args={[spriteWidth, spriteHeight]} />
+    <group position={[member.position.x, (member.position.y || 0) + spriteHeight / 2 + yOffset, member.position.z]}>
+      <mesh
+        ref={meshRef}
+        onClick={handleClick}
+        scale={[spriteWidth * scaleX, spriteHeight * scaleY, 1]}
+      >
+        <planeGeometry args={[1, 1]} />
         <meshBasicMaterial
           map={currentTexture}
           transparent={true}
@@ -97,9 +171,57 @@ export default function CharacterSprite({ member, camera, onClick }) {
           depthWrite={true}
         />
       </mesh>
+
       {/* Name label above sprite */}
-      <NameLabel name={member.name} height={spriteHeight / 2 + 0.15} />
-      {/* Shadow-casting proxy: non-billboarding upright box that casts directional shadows */}
+      <NameLabel name={member.name} height={spriteHeight * scaleY / 2 + 0.15} />
+
+      {/* Activity bubble (shows what the character is doing) */}
+      {isPerforming && (
+        <ActivityBubble
+          label={member.activityLabel}
+          anim={member.activityAnim}
+          category={member.currentInteraction?.category}
+          height={spriteHeight * scaleY / 2 + 0.4}
+          progress={member.interactionDuration > 0 ? member.interactionTimer / member.interactionDuration : 0}
+        />
+      )}
+
+      {/* Floating Z's when sleeping */}
+      {isSleeping && <SleepZZZ height={spriteHeight * scaleY / 2 + 0.3} />}
+
+      {/* Category-specific visual effects */}
+      {isPerforming && member.currentInteraction?.category === 'cooking' && (
+        <SteamEffect height={spriteHeight * scaleY / 2 + 0.2} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'hygiene' && member.activityAnim === 'use' && (
+        <WaterDroplets height={spriteHeight * scaleY / 2} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'exercise' && (
+        <SweatDrops height={spriteHeight * scaleY / 2 + 0.15} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'entertainment' && (
+        <EntertainmentSparkle height={spriteHeight * scaleY / 2 + 0.1} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'eating' && (
+        <EatingEffect height={spriteHeight * scaleY / 2 + 0.1} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'chores' && (
+        <ChoresEffect height={spriteHeight * scaleY / 2 + 0.1} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'education' && (
+        <StudyEffect height={spriteHeight * scaleY / 2 + 0.2} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'social' && (
+        <SocialEffect height={spriteHeight * scaleY / 2 + 0.2} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'hobby' && (
+        <HobbyEffect height={spriteHeight * scaleY / 2 + 0.2} />
+      )}
+      {isPerforming && member.currentInteraction?.category === 'relaxing' && !isSleeping && (
+        <RelaxEffect height={spriteHeight * scaleY / 2 + 0.2} />
+      )}
+
+      {/* Shadow-casting proxy */}
       <mesh castShadow position={[0, 0, 0]}>
         <boxGeometry args={[spriteWidth * 0.4, spriteHeight * 0.9, spriteWidth * 0.25]} />
         <meshBasicMaterial colorWrite={false} depthWrite={false} />
@@ -108,10 +230,389 @@ export default function CharacterSprite({ member, camera, onClick }) {
   );
 }
 
-function NameLabel({ name, height }) {
-  const canvasRef = useRef(null);
-  const textureRef = useRef(null);
+/**
+ * ActivityBubble – floating label showing what a character is currently doing.
+ * Changes colour by activity category and shows a small progress bar.
+ */
+function ActivityBubble({ label, anim, category, height, progress }) {
+  const bgColor = ACTIVITY_COLORS[category] || '#555';
+  // Prefer category icon (more specific), fall back to animation icon
+  const icon = CATEGORY_ICONS[category] || ACTIVITY_ICONS[anim] || '';
+  const displayText = icon ? `${icon} ${label}` : label;
 
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 48);
+
+    // Background pill
+    ctx.fillStyle = bgColor + 'CC';  // semi-transparent
+    ctx.beginPath();
+    ctx.roundRect(2, 2, 252, 36, 6);
+    ctx.fill();
+
+    // Progress bar along bottom
+    if (progress > 0 && progress < 1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillRect(6, 32, 244 * progress, 4);
+    }
+
+    // Text
+    ctx.font = 'bold 14px "Courier New"';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.fillText(displayText.slice(0, 26), 128, 24);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }, [displayText, bgColor, Math.floor(progress * 20)]); // re-generate at 5% steps
+
+  return (
+    <sprite position={[0, height, 0]} scale={[1.4, 0.28, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} />
+    </sprite>
+  );
+}
+
+/**
+ * SleepZZZ – animated floating Z characters above a sleeping sprite
+ */
+function SleepZZZ({ height }) {
+  const groupRef = useRef();
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      // Gentle bobbing
+      groupRef.current.position.y = height + Math.sin(Date.now() * 0.002) * 0.1;
+    }
+  });
+
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 64, 32);
+    ctx.font = 'bold 20px "Courier New"';
+    ctx.fillStyle = '#7986CB';
+    ctx.textAlign = 'center';
+    ctx.fillText('Z Z Z', 32, 22);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }, []);
+
+  return (
+    <group ref={groupRef}>
+      <sprite position={[0, height, 0]} scale={[0.6, 0.2, 1]}>
+        <spriteMaterial map={texture} transparent depthTest={false} opacity={0.85} />
+      </sprite>
+    </group>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Category-specific visual effects — procedural particle/icon sprites
+   ═══════════════════════════════════════════════════════════════════ */
+
+/** Steam puffs for cooking */
+function SteamEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.001 + i * 1.2) % 2;
+        child.position.y = height + t * 0.4;
+        child.position.x = Math.sin(Date.now() * 0.002 + i) * 0.12;
+        child.material.opacity = Math.max(0, 0.6 - t * 0.35);
+        child.scale.setScalar(0.08 + t * 0.06);
+      });
+    }
+  });
+  const tex = useMemo(() => makeCircleTexture('#FFFFFF'), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1, 2].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Water droplets for shower / bath / hygiene */
+function WaterDroplets({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.003 + i * 0.8) % 1.5;
+        child.position.y = height + 0.3 - t * 0.5;
+        child.position.x = (i - 1) * 0.15 + Math.sin(Date.now() * 0.004 + i) * 0.05;
+        child.material.opacity = Math.max(0, 0.7 - t * 0.5);
+        child.scale.setScalar(0.04 + t * 0.01);
+      });
+    }
+  });
+  const tex = useMemo(() => makeCircleTexture('#64B5F6'), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1, 2].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Sweat drops for exercise */
+function SweatDrops({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.002 + i * 1.5) % 2;
+        child.position.y = height + 0.2 - t * 0.3;
+        child.position.x = (i === 0 ? -0.2 : 0.2) + Math.sin(Date.now() * 0.003 + i) * 0.03;
+        child.material.opacity = t < 1.5 ? 0.6 : 0;
+        child.scale.setScalar(0.05);
+      });
+    }
+  });
+  const tex = useMemo(() => makeCircleTexture('#81D4FA'), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Sparkle notes for entertainment (TV, music, games) */
+function EntertainmentSparkle({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.0015 + i * 1.1) % 2.5;
+        child.position.y = height + Math.sin(t * 2) * 0.15;
+        child.position.x = Math.cos(Date.now() * 0.002 + i * 2.1) * 0.25;
+        child.material.opacity = 0.5 + Math.sin(Date.now() * 0.005 + i) * 0.3;
+        child.scale.setScalar(0.06 + Math.sin(Date.now() * 0.003 + i) * 0.02);
+      });
+    }
+  });
+  const tex = useMemo(() => makeStarTexture('#FFD600'), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1, 2].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Fork/food for eating */
+function EatingEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      const child = groupRef.current.children[0];
+      if (child) {
+        // Gentle up-down motion like eating
+        child.position.y = height + Math.sin(Date.now() * 0.004) * 0.08;
+        child.position.x = 0.2;
+        child.material.opacity = 0.7;
+        child.scale.setScalar(0.12);
+      }
+    }
+  });
+  const tex = useMemo(() => makeTextTexture('\ud83c\udf7d\ufe0f', 32), []);
+  return (
+    <group ref={groupRef}>
+      <sprite><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+    </group>
+  );
+}
+
+/** Sparkle dust for chores (cleaning) */
+function ChoresEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.002 + i * 1.3) % 2;
+        child.position.y = height - 0.3 + Math.sin(t * 3) * 0.1;
+        child.position.x = Math.sin(Date.now() * 0.003 + i * 2) * 0.3;
+        child.material.opacity = 0.4 + Math.sin(Date.now() * 0.004 + i) * 0.2;
+        child.scale.setScalar(0.04);
+      });
+    }
+  });
+  const tex = useMemo(() => makeCircleTexture('#CE93D8'), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1, 2, 3].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Book / lightbulb for study / education */
+function StudyEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      const child = groupRef.current.children[0];
+      if (child) {
+        child.position.y = height + 0.1 + Math.sin(Date.now() * 0.001) * 0.03;
+        child.position.x = 0.22;
+        child.material.opacity = 0.5 + Math.sin(Date.now() * 0.003) * 0.2;
+        child.scale.setScalar(0.1);
+      }
+    }
+  });
+  const tex = useMemo(() => makeTextTexture('\ud83d\udca1', 32), []);
+  return (
+    <group ref={groupRef}>
+      <sprite><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+    </group>
+  );
+}
+
+/** Speech bubbles for social */
+function SocialEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.001 + i * 1.8) % 3;
+        child.position.y = height + t * 0.12;
+        child.position.x = (i === 0 ? -0.15 : 0.15);
+        child.material.opacity = t < 2.5 ? 0.6 : 0;
+        child.scale.setScalar(0.08 + i * 0.02);
+      });
+    }
+  });
+  const tex = useMemo(() => makeTextTexture('\ud83d\udcac', 32), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Music note / palette for hobbies */
+function HobbyEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.children.forEach((child, i) => {
+        const t = (Date.now() * 0.0012 + i * 1.5) % 3;
+        child.position.y = height + 0.1 + t * 0.08;
+        child.position.x = Math.sin(Date.now() * 0.002 + i * 2) * 0.2;
+        child.material.opacity = Math.max(0, 0.7 - t * 0.25);
+        child.scale.setScalar(0.08);
+      });
+    }
+  });
+  const tex = useMemo(() => makeTextTexture('\u266b', 32), []);
+  return (
+    <group ref={groupRef}>
+      {[0, 1].map(i => (
+        <sprite key={i}><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+      ))}
+    </group>
+  );
+}
+
+/** Gentle floating hearts/clouds for relaxing */
+function RelaxEffect({ height }) {
+  const groupRef = useRef();
+  useFrame(() => {
+    if (groupRef.current) {
+      const child = groupRef.current.children[0];
+      if (child) {
+        child.position.y = height + 0.15 + Math.sin(Date.now() * 0.0008) * 0.06;
+        child.position.x = Math.sin(Date.now() * 0.001) * 0.05;
+        child.material.opacity = 0.4 + Math.sin(Date.now() * 0.002) * 0.15;
+        child.scale.setScalar(0.1);
+      }
+    }
+  });
+  const tex = useMemo(() => makeTextTexture('\u2601\ufe0f', 32), []);
+  return (
+    <group ref={groupRef}>
+      <sprite><spriteMaterial map={tex} transparent depthTest={false} /></sprite>
+    </group>
+  );
+}
+
+/* ═══ Texture helpers ═══════════════════════════════════════════════ */
+
+/** Create a small circle texture with the given colour */
+function makeCircleTexture(color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 16;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(8, 8, 7, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+/** Create a small star texture */
+function makeStarTexture(color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 16;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+    const r = i === 0 ? 7 : 7;
+    ctx[i === 0 ? 'moveTo' : 'lineTo'](8 + Math.cos(a) * 7, 8 + Math.sin(a) * 7);
+    const a2 = a + (2 * Math.PI) / 10;
+    ctx.lineTo(8 + Math.cos(a2) * 3, 8 + Math.sin(a2) * 3);
+  }
+  ctx.closePath();
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+/** Create a texture from an emoji/text character */
+function makeTextTexture(text, size = 32) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${size * 0.8}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, size / 2, size / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+function NameLabel({ name, height }) {
   const texture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 128;

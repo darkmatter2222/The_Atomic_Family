@@ -6,7 +6,7 @@ import { HOUSE_LAYOUT, getWallSegments } from '../game/HouseLayout';
  * House3D - Renders the 3D house with rooms, walls, furniture, and doors.
  * Walls have selective transparency so we can see sprites inside.
  */
-export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, onGroundClick, visibility = {}, roomLights = {} }) {
+export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, onGroundClick, visibility = {}, roomLights = {}, firstPerson = false }) {
   const layout = HOUSE_LAYOUT;
   const showWalls = visibility.walls !== false;
   const showDoors = visibility.doors !== false;
@@ -38,7 +38,7 @@ export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, on
       ))}
 
       {/* Walls */}
-      {showWalls && <HouseWalls layout={layout} />}
+      {showWalls && <HouseWalls layout={layout} firstPerson={firstPerson} />}
 
       {/* Door frames */}
       {showDoors && <DoorFrames layout={layout} />}
@@ -487,16 +487,16 @@ function RoomFloor({ room, onRoomHover, onFurnitureHover, onRoomClick }) {
   );
 }
 
-function HouseWalls({ layout }) {
+function HouseWalls({ layout, firstPerson = false }) {
   const wallHeight = layout.wallHeight;
   const thickness = layout.wallThickness;
   const wallMaterial = useMemo(() => new THREE.MeshStandardMaterial({
     color: '#F5F5DC',
     transparent: true,
-    opacity: 0.35,
+    opacity: firstPerson ? 0.12 : 0.35,
     side: THREE.DoubleSide,
     depthWrite: false
-  }), []);
+  }), [firstPerson]);
 
   // Use pre-computed wall segments that already have door gaps cut out
   const segments = useMemo(() => getWallSegments(), []);
