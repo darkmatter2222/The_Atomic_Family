@@ -6,7 +6,7 @@ import { HOUSE_LAYOUT, getWallSegments } from '../game/HouseLayout';
  * House3D - Renders the 3D house with rooms, walls, furniture, and doors.
  * Walls have selective transparency so we can see sprites inside.
  */
-export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, onGroundClick, visibility = {} }) {
+export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, onGroundClick, visibility = {}, roomLights = {} }) {
   const layout = HOUSE_LAYOUT;
   const showWalls = visibility.walls !== false;
   const showDoors = visibility.doors !== false;
@@ -47,6 +47,9 @@ export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, on
       {showFurniture && layout.furniture.map(item => (
         <FurnitureItem key={item.id} item={item} onFurnitureHover={onFurnitureHover} />
       ))}
+
+      {/* Room light fixtures & actual point lights */}
+      <RoomLights layout={layout} roomLights={roomLights} />
     </group>
   );
 }
@@ -56,7 +59,7 @@ export default function House3D({ onRoomHover, onFurnitureHover, onRoomClick, on
  */
 function Exterior({ layout }) {
   const ext = layout.exterior;
-  const { lawn, driveway, sidewalk, street, hedges, mailbox, fence, walkway } = ext;
+  const { lawn, driveway, sidewalk, street, hedges, mailbox, fence, walkway, patio } = ext;
 
   const makeGround = (area, y = 0.01) => {
     const w = area.maxX - area.minX;
@@ -70,6 +73,7 @@ function Exterior({ layout }) {
   const dw = makeGround(driveway, 0.018);
   const sw = makeGround(sidewalk, 0.022);
   const st = makeGround(street, 0.005);
+  const pt = patio ? makeGround(patio, 0.019) : null;
 
   // Front walkway dimensions
   const wkLen = walkway.maxZ - walkway.minZ;
@@ -94,6 +98,14 @@ function Exterior({ layout }) {
         <planeGeometry args={[walkway.width, wkLen]} />
         <meshStandardMaterial color={walkway.color} />
       </mesh>
+
+      {/* Back patio (behind the house) */}
+      {pt && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[pt.cx, pt.y, pt.cz]} receiveShadow>
+          <planeGeometry args={[pt.w, pt.d]} />
+          <meshStandardMaterial color={patio.color} />
+        </mesh>
+      )}
 
       {/* Sidewalk */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[sw.cx, sw.y, sw.cz]} receiveShadow>
@@ -180,8 +192,23 @@ function PicketFence({ fence }) {
 
   const segments = useMemo(() => {
     const segs = [];
-    // Back
-    segs.push({ axis: 'x', fixed: bounds.minZ, from: bounds.minX, to: bounds.maxX });
+    // Back (with gate gaps)
+    const backGates = (gates || [])
+      .filter(g => g.side === 'back')
+      .map(g => ({ min: g.center - g.width / 2, max: g.center + g.width / 2 }))
+      .sort((a, b) => a.min - b.min);
+    {
+      let cursor = bounds.minX;
+      for (const gap of backGates) {
+        if (cursor < gap.min - 0.01) {
+          segs.push({ axis: 'x', fixed: bounds.minZ, from: cursor, to: gap.min });
+        }
+        cursor = gap.max;
+      }
+      if (cursor < bounds.maxX - 0.01) {
+        segs.push({ axis: 'x', fixed: bounds.minZ, from: cursor, to: bounds.maxX });
+      }
+    }
     // Left
     segs.push({ axis: 'z', fixed: bounds.minX, from: bounds.minZ, to: bounds.maxZ });
     // Right
@@ -191,15 +218,17 @@ function PicketFence({ fence }) {
       .filter(g => g.side === 'front')
       .map(g => ({ min: g.center - g.width / 2, max: g.center + g.width / 2 }))
       .sort((a, b) => a.min - b.min);
-    let cursor = bounds.minX;
-    for (const gap of frontGates) {
-      if (cursor < gap.min - 0.01) {
-        segs.push({ axis: 'x', fixed: bounds.maxZ, from: cursor, to: gap.min });
+    {
+      let cursor = bounds.minX;
+      for (const gap of frontGates) {
+        if (cursor < gap.min - 0.01) {
+          segs.push({ axis: 'x', fixed: bounds.maxZ, from: cursor, to: gap.min });
+        }
+        cursor = gap.max;
       }
-      cursor = gap.max;
-    }
-    if (cursor < bounds.maxX - 0.01) {
-      segs.push({ axis: 'x', fixed: bounds.maxZ, from: cursor, to: bounds.maxX });
+      if (cursor < bounds.maxX - 0.01) {
+        segs.push({ axis: 'x', fixed: bounds.maxZ, from: cursor, to: bounds.maxX });
+      }
     }
     return segs;
   }, [bounds, gates]);
@@ -261,7 +290,7 @@ function PicketFence({ fence }) {
         const leftX = gate.center - gate.width / 2;
         const rightX = gate.center + gate.width / 2;
         return (
-          <group key={`gate_${gi}`}>
+          <group key={`gate_front_${gi}`}>
             <mesh position={[leftX, gatePostH / 2, bounds.maxZ]} castShadow>
               <boxGeometry args={[gatePostW, gatePostH, gatePostW]} />
               <meshStandardMaterial color={color} />
@@ -273,6 +302,147 @@ function PicketFence({ fence }) {
           </group>
         );
       })}
+      {/* Back gate posts */}
+      {(gates || []).filter(g => g.side === 'back').map((gate, gi) => {
+        const gatePostW = 0.15;
+        const gatePostH = height + 0.3;
+        const leftX = gate.center - gate.width / 2;
+        const rightX = gate.center + gate.width / 2;
+        return (
+          <group key={`gate_back_${gi}`}>
+            <mesh position={[leftX, gatePostH / 2, bounds.minZ]} castShadow>
+              <boxGeometry args={[gatePostW, gatePostH, gatePostW]} />
+              <meshStandardMaterial color={color} />
+            </mesh>
+            <mesh position={[rightX, gatePostH / 2, bounds.minZ]} castShadow>
+              <boxGeometry args={[gatePostW, gatePostH, gatePostW]} />
+              <meshStandardMaterial color={color} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+ *  RoomLights - Renders visual light fixtures and actual pointLights
+ *  roomLights = { room_id: true/false, _exterior: true/false }
+ * ════════════════════════════════════════════════════════════════ */
+
+function RoomLights({ layout, roomLights }) {
+  if (!layout.lights) return null;
+
+  return (
+    <group>
+      {layout.lights.map(light => {
+        const isOn = roomLights[light.room] !== false; // default on
+        const { position: p, color, intensity, distance, type } = light;
+
+        return (
+          <group key={light.id} position={[p.x, 0, p.z]}>
+            {/* Visual fixture */}
+            {type === 'ceiling' && <CeilingFixture y={p.y} isOn={isOn} color={color} />}
+            {type === 'lamp' && <LampFixture y={p.y} isOn={isOn} color={color} />}
+            {type === 'porch' && <PorchFixture y={p.y} isOn={isOn} color={color} />}
+
+            {/* Actual point light */}
+            {isOn && (
+              <pointLight
+                position={[0, type === 'lamp' ? p.y + 0.3 : p.y - 0.15, 0]}
+                color={color}
+                intensity={intensity}
+                distance={distance}
+                decay={2}
+              />
+            )}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+/* Ceiling light – a disk flush to ceiling with a glass dome */
+function CeilingFixture({ y, isOn, color }) {
+  return (
+    <group position={[0, y, 0]}>
+      {/* Mounting plate */}
+      <mesh position={[0, 0, 0]}>
+        <cylinderGeometry args={[0.15, 0.15, 0.04, 12]} />
+        <meshStandardMaterial color="#888" />
+      </mesh>
+      {/* Glass dome / shade */}
+      <mesh position={[0, -0.12, 0]}>
+        <sphereGeometry args={[0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial
+          color={isOn ? color : '#555'}
+          emissive={isOn ? color : '#000'}
+          emissiveIntensity={isOn ? 0.8 : 0}
+          transparent
+          opacity={isOn ? 0.9 : 0.5}
+          side={2}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+/* Table / nightstand lamp – small base + shade */
+function LampFixture({ y, isOn, color }) {
+  return (
+    <group position={[0, y, 0]}>
+      {/* Base */}
+      <mesh position={[0, 0.05, 0]}>
+        <cylinderGeometry args={[0.06, 0.08, 0.1, 8]} />
+        <meshStandardMaterial color="#333" />
+      </mesh>
+      {/* Stem */}
+      <mesh position={[0, 0.2, 0]}>
+        <cylinderGeometry args={[0.02, 0.02, 0.2, 6]} />
+        <meshStandardMaterial color="#666" />
+      </mesh>
+      {/* Shade (cone) */}
+      <mesh position={[0, 0.35, 0]}>
+        <cylinderGeometry args={[0.05, 0.15, 0.18, 10, 1, true]} />
+        <meshStandardMaterial
+          color={isOn ? '#FFF8E0' : '#A09080'}
+          emissive={isOn ? color : '#000'}
+          emissiveIntensity={isOn ? 0.6 : 0}
+          transparent
+          opacity={isOn ? 0.85 : 0.6}
+          side={2}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+/* Exterior / porch wall-mount light */
+function PorchFixture({ y, isOn, color }) {
+  return (
+    <group position={[0, y, 0]}>
+      {/* Bracket */}
+      <mesh position={[0, 0, 0]}>
+        <boxGeometry args={[0.1, 0.08, 0.1]} />
+        <meshStandardMaterial color="#555" />
+      </mesh>
+      {/* Lantern body */}
+      <mesh position={[0, -0.15, 0]}>
+        <boxGeometry args={[0.14, 0.22, 0.14]} />
+        <meshStandardMaterial
+          color={isOn ? '#FFF5D0' : '#888'}
+          emissive={isOn ? color : '#000'}
+          emissiveIntensity={isOn ? 0.7 : 0}
+          transparent
+          opacity={isOn ? 0.85 : 0.5}
+        />
+      </mesh>
+      {/* Cap */}
+      <mesh position={[0, -0.04, 0]}>
+        <boxGeometry args={[0.18, 0.03, 0.18]} />
+        <meshStandardMaterial color="#444" />
+      </mesh>
     </group>
   );
 }
@@ -367,7 +537,7 @@ function DoorFrames({ layout }) {
 
   return (
     <group>
-      {layout.doors.map((door, i) => {
+      {layout.doors.filter(d => d.visible !== false).map((door, i) => {
         const { position, width } = door;
         // All doors are on Z-aligned walls (x = const boundary)
         const isZWall = door.axis === 'z';
@@ -949,6 +1119,83 @@ const FURNITURE_RENDERERS = {
     </>
   ),
 
+  /* ─── Folding Table ──────────────────────────────────── */
+  folding_table: (item, c) => (
+    <>
+      {/* Tabletop */}
+      <B p={[0, 0.85, 0]} s={[item.size.w, 0.05, item.size.d]} col={c('#DEB887')} />
+      {/* Legs */}
+      <B p={[-item.size.w/2+0.06, 0.42, -item.size.d/2+0.06]} s={[0.06, 0.84, 0.06]} col={c('#A0826D')} />
+      <B p={[item.size.w/2-0.06, 0.42, -item.size.d/2+0.06]} s={[0.06, 0.84, 0.06]} col={c('#A0826D')} />
+      <B p={[-item.size.w/2+0.06, 0.42, item.size.d/2-0.06]} s={[0.06, 0.84, 0.06]} col={c('#A0826D')} />
+      <B p={[item.size.w/2-0.06, 0.42, item.size.d/2-0.06]} s={[0.06, 0.84, 0.06]} col={c('#A0826D')} />
+      {/* Folded clothes stack */}
+      <B p={[-0.5, 0.95, 0]} s={[0.4, 0.15, 0.35]} col={c('#87CEEB')} cast={false} />
+      <B p={[0.3, 0.95, 0.1]} s={[0.35, 0.12, 0.3]} col={c('#FFB6C1')} cast={false} />
+    </>
+  ),
+
+  /* ─── Drying Rack ────────────────────────────────────── */
+  drying_rack: (item, c) => (
+    <>
+      {/* Frame legs */}
+      <B p={[-item.size.w/2+0.04, 0.55, 0]} s={[0.04, 1.1, 0.04]} col={c('#B0B0B0')} />
+      <B p={[item.size.w/2-0.04, 0.55, 0]} s={[0.04, 1.1, 0.04]} col={c('#B0B0B0')} />
+      {/* Top bar */}
+      <B p={[0, 1.1, 0]} s={[item.size.w, 0.03, 0.03]} col={c('#B0B0B0')} />
+      {/* Horizontal drying rods */}
+      <B p={[0, 0.9, 0]} s={[item.size.w-0.1, 0.02, 0.02]} col={c('#C8C8C8')} />
+      <B p={[0, 0.7, 0]} s={[item.size.w-0.1, 0.02, 0.02]} col={c('#C8C8C8')} />
+      <B p={[0, 0.5, 0]} s={[item.size.w-0.1, 0.02, 0.02]} col={c('#C8C8C8')} />
+      {/* Hanging cloth */}
+      <B p={[0.15, 0.8, 0.08]} s={[0.3, 0.25, 0.02]} col={c('#E8E8E8')} cast={false} />
+      <B p={[-0.2, 0.6, 0.06]} s={[0.25, 0.22, 0.02]} col={c('#ADD8E6')} cast={false} />
+    </>
+  ),
+
+  /* ─── Supply Shelf ───────────────────────────────────── */
+  laundry_shelf: (item, c) => (
+    <>
+      {/* Back panel */}
+      <B p={[0, 0.8, -item.size.d/2+0.02]} s={[item.size.w, item.size.h, 0.04]} col={c('#555555')} />
+      {/* Shelves */}
+      <B p={[0, 0.3, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#696969')} />
+      <B p={[0, 0.7, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#696969')} />
+      <B p={[0, 1.1, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#696969')} />
+      <B p={[0, 1.5, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#696969')} />
+      {/* Detergent bottles */}
+      <B p={[-0.1, 0.42, 0]} s={[0.12, 0.2, 0.1]} col={c('#1E90FF')} cast={false} />
+      <B p={[0.1, 0.44, 0]} s={[0.1, 0.24, 0.1]} col={c('#FF6347')} cast={false} />
+      {/* Fabric softener */}
+      <B p={[0, 0.82, 0]} s={[0.12, 0.2, 0.1]} col={c('#DA70D6')} cast={false} />
+    </>
+  ),
+
+  /* ─── Sorting Basket ─────────────────────────────────── */
+  laundry_basket_2: (item, c) => (
+    <>
+      <B p={[0, 0.15, 0]} s={[item.size.w - 0.08, 0.3, item.size.d - 0.08]} col={c('#8B6F47')} />
+      <B p={[0, 0.4, 0]} s={[item.size.w, 0.3, item.size.d]} col={c('#8B6F47')} />
+      <B p={[0, 0.56, 0]} s={[item.size.w + 0.04, 0.04, item.size.d + 0.04]} col={c('#6D5535')} />
+      {/* Color-coded divider */}
+      <B p={[0, 0.35, 0]} s={[0.03, 0.3, item.size.d - 0.1]} col={c('#444444')} cast={false} />
+      {/* Dark clothes */}
+      <B p={[-0.12, 0.55, 0]} s={[0.18, 0.08, 0.15]} col={c('#333333')} cast={false} />
+    </>
+  ),
+
+  /* ─── Steam Press ────────────────────────────────────── */
+  steam_press: (item, c) => (
+    <>
+      {/* Base */}
+      <B p={[0, 0.15, 0]} s={[item.size.w, 0.3, item.size.d]} col={c('#3A3A3A')} />
+      {/* Top press plate */}
+      <B p={[0, 0.35, 0]} s={[item.size.w - 0.05, 0.05, item.size.d - 0.05]} col={c('#505050')} />
+      {/* Handle */}
+      <B p={[0, 0.42, 0.15]} s={[0.2, 0.06, 0.04]} col={c('#222222')} />
+    </>
+  ),
+
   /* ─── Kids Beds ──────────────────────────────────────── */
   kids_bed_1: (item, c) => <BedShape c={c} frameColor="#D45A8A" blanketColor="#FF69B4" size={item.size} />,
   kids_bed_2: (item, c) => <BedShape c={c} frameColor="#3050A0" blanketColor="#4169E1" size={item.size} />,
@@ -1055,9 +1302,433 @@ const FURNITURE_RENDERERS = {
       <B p={[0, 0.7, 0.45]} s={[0.3, 0.04, 0.04]} col={c('#888')} cast={false} />
     </>
   ),
+
+  /* ─── Lawn Mower ─────────────────────────────────────── */
+  lawn_mower: (item, c) => (
+    <>
+      {/* Body/deck */}
+      <B p={[0, 0.15, 0]} s={[item.size.w, 0.15, item.size.d]} col={c('#228B22')} />
+      {/* Engine housing */}
+      <B p={[0, 0.3, -0.1]} s={[0.35, 0.2, 0.45]} col={c('#1a6e1a')} />
+      {/* Engine top */}
+      <B p={[0, 0.42, -0.1]} s={[0.25, 0.06, 0.3]} col={c('#111')} />
+      {/* Wheels */}
+      {[[-0.28, -0.4], [0.28, -0.4], [-0.28, 0.4], [0.28, 0.4]].map(([wx, wz], i) => (
+        <mesh key={i} position={[wx, 0.1, wz]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.1, 0.1, 0.06, 8]} />
+          <meshStandardMaterial color={c('#222')} />
+        </mesh>
+      ))}
+      {/* Handle bar (vertical posts) */}
+      <B p={[-0.12, 0.45, 0.45]} s={[0.03, 0.5, 0.03]} col={c('#666')} />
+      <B p={[0.12, 0.45, 0.45]} s={[0.03, 0.5, 0.03]} col={c('#666')} />
+      {/* Handle crossbar */}
+      <B p={[0, 0.7, 0.48]} s={[0.28, 0.04, 0.03]} col={c('#444')} />
+      {/* Grass catcher bag */}
+      <B p={[0, 0.22, -0.5]} s={[0.3, 0.18, 0.2]} col={c('#2a2a2a')} />
+    </>
+  ),
+
+  /* ─── Backyard: Swing Set ────────────────────────────── */
+  swing_set: (item, c) => (
+    <>
+      {/* A-frame legs (left) */}
+      <B p={[-1.8, 1.3, -0.7]} s={[0.1, 2.6, 0.1]} col={c('#8B4513')} />
+      <B p={[-1.8, 1.3, 0.7]} s={[0.1, 2.6, 0.1]} col={c('#8B4513')} />
+      {/* A-frame legs (right) */}
+      <B p={[1.8, 1.3, -0.7]} s={[0.1, 2.6, 0.1]} col={c('#8B4513')} />
+      <B p={[1.8, 1.3, 0.7]} s={[0.1, 2.6, 0.1]} col={c('#8B4513')} />
+      {/* Top crossbar */}
+      <B p={[0, 2.6, 0]} s={[3.8, 0.12, 0.12]} col={c('#8B4513')} />
+      {/* Swing 1: chains + seat */}
+      <B p={[-0.8, 1.5, 0]} s={[0.03, 2.0, 0.03]} col={c('#888')} />
+      <B p={[-0.5, 1.5, 0]} s={[0.03, 2.0, 0.03]} col={c('#888')} />
+      <B p={[-0.65, 0.45, 0]} s={[0.4, 0.05, 0.2]} col={c('#222')} />
+      {/* Swing 2: chains + seat */}
+      <B p={[0.5, 1.5, 0]} s={[0.03, 2.0, 0.03]} col={c('#888')} />
+      <B p={[0.8, 1.5, 0]} s={[0.03, 2.0, 0.03]} col={c('#888')} />
+      <B p={[0.65, 0.45, 0]} s={[0.4, 0.05, 0.2]} col={c('#222')} />
+    </>
+  ),
+
+  /* ─── Backyard: Slide ────────────────────────────────── */
+  slide: (item, c) => (
+    <>
+      {/* Ladder (back side) */}
+      {/* Left rail */}
+      <B p={[-0.35, 1.1, -1.0]} s={[0.08, 2.2, 0.08]} col={c('#4682B4')} />
+      {/* Right rail */}
+      <B p={[0.35, 1.1, -1.0]} s={[0.08, 2.2, 0.08]} col={c('#4682B4')} />
+      {/* Ladder rungs */}
+      {[0.4, 0.7, 1.0, 1.3, 1.6].map((y, i) => (
+        <B key={i} p={[0, y, -1.0]} s={[0.6, 0.06, 0.06]} col={c('#4682B4')} />
+      ))}
+      {/* Platform at top */}
+      <B p={[0, 2.0, -0.6]} s={[0.9, 0.08, 0.8]} col={c('#4682B4')} />
+      {/* Slide chute (angled) */}
+      <mesh position={[0, 1.0, 0.5]} rotation={[0.55, 0, 0]}>
+        <boxGeometry args={[0.7, 0.04, 2.5]} />
+        <meshStandardMaterial color={c('#FF4500')} />
+      </mesh>
+      {/* Slide rails */}
+      <mesh position={[-0.38, 1.1, 0.5]} rotation={[0.55, 0, 0]}>
+        <boxGeometry args={[0.06, 0.15, 2.5]} />
+        <meshStandardMaterial color={c('#FF4500')} />
+      </mesh>
+      <mesh position={[0.38, 1.1, 0.5]} rotation={[0.55, 0, 0]}>
+        <boxGeometry args={[0.06, 0.15, 2.5]} />
+        <meshStandardMaterial color={c('#FF4500')} />
+      </mesh>
+    </>
+  ),
+
+  /* ─── Backyard: Sandbox ──────────────────────────────── */
+  sandbox: (item, c) => (
+    <>
+      {/* Sand base */}
+      <B p={[0, 0.12, 0]} s={[item.size.w, 0.2, item.size.d]} col={c('#F4D03F')} />
+      {/* Wooden border walls */}
+      <B p={[0, 0.25, -item.size.d / 2 + 0.06]} s={[item.size.w + 0.12, 0.3, 0.12]} col={c('#8B4513')} />
+      <B p={[0, 0.25, item.size.d / 2 - 0.06]} s={[item.size.w + 0.12, 0.3, 0.12]} col={c('#8B4513')} />
+      <B p={[-item.size.w / 2 + 0.06, 0.25, 0]} s={[0.12, 0.3, item.size.d]} col={c('#8B4513')} />
+      <B p={[item.size.w / 2 - 0.06, 0.25, 0]} s={[0.12, 0.3, item.size.d]} col={c('#8B4513')} />
+      {/* Little sand mound */}
+      <mesh position={[0.5, 0.28, 0.3]}>
+        <coneGeometry args={[0.3, 0.2, 8]} />
+        <meshStandardMaterial color={c('#E8C520')} />
+      </mesh>
+      {/* Bucket */}
+      <B p={[-0.6, 0.3, -0.5]} s={[0.2, 0.2, 0.2]} col={c('#E74C3C')} />
+      {/* Small shovel */}
+      <B p={[0.8, 0.26, 0.6]} s={[0.06, 0.04, 0.3]} col={c('#3498DB')} />
+    </>
+  ),
+
+  /* ─── Backyard: Monkey Bars ──────────────────────────── */
+  monkey_bars: (item, c) => (
+    <>
+      {/* Left uprights */}
+      <B p={[-1.5, 1.1, -0.4]} s={[0.1, 2.2, 0.1]} col={c('#4682B4')} />
+      <B p={[-1.5, 1.1, 0.4]} s={[0.1, 2.2, 0.1]} col={c('#4682B4')} />
+      {/* Right uprights */}
+      <B p={[1.5, 1.1, -0.4]} s={[0.1, 2.2, 0.1]} col={c('#4682B4')} />
+      <B p={[1.5, 1.1, 0.4]} s={[0.1, 2.2, 0.1]} col={c('#4682B4')} />
+      {/* Top side rails */}
+      <B p={[0, 2.15, -0.4]} s={[3.2, 0.08, 0.08]} col={c('#4682B4')} />
+      <B p={[0, 2.15, 0.4]} s={[3.2, 0.08, 0.08]} col={c('#4682B4')} />
+      {/* Rungs across the top */}
+      {[-1.2, -0.8, -0.4, 0, 0.4, 0.8, 1.2].map((x, i) => (
+        <B key={i} p={[x, 2.15, 0]} s={[0.06, 0.06, 0.8]} col={c('#FFD700')} />
+      ))}
+    </>
+  ),
+
+  /* ─── Backyard: Soccer Ball ──────────────────────────── */
+  soccer_ball: (item, c) => (
+    <mesh position={[0, 0.15, 0]} castShadow>
+      <sphereGeometry args={[0.14, 12, 12]} />
+      <meshStandardMaterial color={c('#EEEEEE')} />
+    </mesh>
+  ),
+
+  /* ─── Backyard: Basketball ───────────────────────────── */
+  basketball: (item, c) => (
+    <mesh position={[0, 0.15, 0]} castShadow>
+      <sphereGeometry args={[0.14, 12, 12]} />
+      <meshStandardMaterial color={c('#E87511')} />
+    </mesh>
+  ),
+
+  /* ─── Backyard: Beach Ball ───────────────────────────── */
+  beach_ball: (item, c) => (
+    <mesh position={[0, 0.2, 0]} castShadow>
+      <sphereGeometry args={[0.2, 16, 16]} />
+      <meshStandardMaterial color={c('#FF69B4')} />
+    </mesh>
+  ),
+
+  /* ─── Backyard: Jump Rope ────────────────────────────── */
+  jump_rope: (item, c) => (
+    <>
+      {/* Rope coiled on the ground */}
+      <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.25, 0.02, 8, 24]} />
+        <meshStandardMaterial color={c('#E74C3C')} />
+      </mesh>
+      {/* Handles */}
+      <B p={[-0.35, 0.06, 0]} s={[0.06, 0.12, 0.06]} col={c('#8B4513')} />
+      <B p={[0.35, 0.06, 0]} s={[0.06, 0.12, 0.06]} col={c('#8B4513')} />
+    </>
+  ),
+
+  /* ─── Backyard: Picnic Table ─────────────────────────── */
+  picnic_table: (item, c) => (
+    <>
+      {/* Table top */}
+      <B p={[0, 0.72, 0]} s={[item.size.w, 0.08, item.size.d - 0.2]} col={c('#8B4513')} />
+      {/* Table legs */}
+      {[[-0.7, -0.3], [0.7, -0.3], [-0.7, 0.3], [0.7, 0.3]].map(([lx, lz], i) => (
+        <B key={i} p={[lx, 0.36, lz]} s={[0.08, 0.72, 0.08]} col={c('#6B3513')} />
+      ))}
+      {/* Bench (front) */}
+      <B p={[0, 0.4, 0.55]} s={[item.size.w - 0.2, 0.06, 0.3]} col={c('#A0522D')} />
+      {/* Bench (back) */}
+      <B p={[0, 0.4, -0.55]} s={[item.size.w - 0.2, 0.06, 0.3]} col={c('#A0522D')} />
+      {/* Bench legs */}
+      {[[-0.7, 0.55], [0.7, 0.55], [-0.7, -0.55], [0.7, -0.55]].map(([lx, lz], i) => (
+        <B key={`bl${i}`} p={[lx, 0.2, lz]} s={[0.06, 0.4, 0.06]} col={c('#6B3513')} />
+      ))}
+    </>
+  ),
+
+  /* ─── Backyard: Trampoline ───────────────────────────── */
+  trampoline: (item, c) => (
+    <>
+      {/* Legs */}
+      {[[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]].map(([lx, lz], i) => (
+        <B key={i} p={[lx, 0.35, lz]} s={[0.08, 0.7, 0.08]} col={c('#555')} />
+      ))}
+      {/* Frame ring */}
+      <mesh position={[0, 0.72, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.15, 0.06, 8, 24]} />
+        <meshStandardMaterial color={c('#2C3E50')} />
+      </mesh>
+      {/* Bounce surface */}
+      <mesh position={[0, 0.7, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[1.1, 24]} />
+        <meshStandardMaterial color={c('#1a1a2e')} />
+      </mesh>
+      {/* Safety padding (ring around edge) */}
+      <mesh position={[0, 0.74, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.15, 0.12, 8, 24]} />
+        <meshStandardMaterial color={c('#3498DB')} />
+      </mesh>
+    </>
+  ),
+
+  /* ─── Backyard: Garden Shed ──────────────────────────── */
+  garden_shed: (item, c) => (
+    <>
+      {/* Main body */}
+      <B p={[0, 1, 0]} s={[item.size.w, 2, item.size.d]} col={c('#7B5B3A')} />
+      {/* Roof (peaked) */}
+      <mesh position={[0, 2.25, 0]} rotation={[0, 0, 0]}>
+        <boxGeometry args={[item.size.w + 0.3, 0.08, item.size.d + 0.3]} />
+        <meshStandardMaterial color={c('#5C3317')} />
+      </mesh>
+      <mesh position={[0, 2.5, 0]}>
+        <boxGeometry args={[item.size.w * 0.3, 0.08, item.size.d + 0.3]} />
+        <meshStandardMaterial color={c('#5C3317')} />
+      </mesh>
+      {/* Door */}
+      <B p={[0, 0.7, item.size.d / 2 + 0.01]} s={[0.7, 1.4, 0.02]} col={c('#5C3317')} />
+      {/* Door handle */}
+      <B p={[0.2, 0.7, item.size.d / 2 + 0.03]} s={[0.05, 0.05, 0.05]} col={c('#C0A060')} cast={false} />
+      {/* Window */}
+      <B p={[0, 1.5, item.size.d / 2 + 0.02]} s={[0.4, 0.3, 0.02]} col={c('#87CEEB')} cast={false} />
+    </>
+  ),
+
+  /* ─── Closet: Clothes Rod with Hanging Clothes ───────── */
+  master_clothes_rod_l: (item, c) => <ClothesRodRenderer item={item} c={c} colors={['#8B0000', '#2F4F4F', '#4A2F6B', '#1E3A5F', '#5C3317', '#2E4A2E']} />,
+  master_clothes_rod_r: (item, c) => <ClothesRodRenderer item={item} c={c} colors={['#C8A060', '#8B6914', '#4682B4', '#333', '#D2691E']} />,
+  kids_clothes_rod_1: (item, c) => <ClothesRodRenderer item={item} c={c} colors={['#FF69B4', '#FF1493', '#FFB6C1', '#DA70D6', '#FF6EB4']} />,
+  kids_clothes_rod_2: (item, c) => <ClothesRodRenderer item={item} c={c} colors={['#4169E1', '#32CD32', '#FFD700', '#FF6347', '#9370DB']} />,
+
+  /* ─── Closet: Shoe Rack ──────────────────────────────── */
+  master_shoe_rack: (item, c) => <ShoeRackRenderer item={item} c={c} colors={['#2F2F2F', '#8B4513', '#4A2F6B', '#1a1a1a']} />,
+  kids_shoe_rack: (item, c) => <ShoeRackRenderer item={item} c={c} colors={['#FF69B4', '#4169E1', '#32CD32', '#FFD700']} />,
+
+  /* ─── Closet: Full-Length Mirror ─────────────────────── */
+  master_mirror: (item, c) => (
+    <>
+      {/* Mirror frame */}
+      <B p={[0, 0, 0]} s={[0.12, item.size.h + 0.1, item.size.d + 0.1]} col={c('#8B7355')} />
+      {/* Mirror surface */}
+      <B p={[0.02, 0, 0]} s={[0.02, item.size.h, item.size.d]} col={c('#C0E8FF')} cast={false} />
+    </>
+  ),
+
+  /* ─── Closet: Storage Box ────────────────────────────── */
+  master_storage_box: (item, c) => (
+    <>
+      <B p={[0, item.size.h / 2, 0]} s={[item.size.w, item.size.h, item.size.d]} col={c('#B0A090')} />
+      {/* Lid */}
+      <B p={[0, item.size.h + 0.02, 0]} s={[item.size.w + 0.04, 0.04, item.size.d + 0.04]} col={c('#A09080')} cast={false} />
+    </>
+  ),
+
+  /* ─── Closet: Costume Box ────────────────────────────── */
+  kids_costume_box: (item, c) => (
+    <>
+      <B p={[0, item.size.h / 2, 0]} s={[item.size.w, item.size.h, item.size.d]} col={c('#FFD700')} />
+      {/* Lid slightly open */}
+      <B p={[0, item.size.h + 0.02, -0.1]} s={[item.size.w + 0.04, 0.04, item.size.d * 0.7]} col={c('#E8C520')} cast={false} />
+      {/* Cape peeking out */}
+      <B p={[0.15, item.size.h, 0.2]} s={[0.2, 0.15, 0.05]} col={c('#E74C3C')} cast={false} />
+    </>
+  ),
+
+  /* ─── Closet: Storage Bins ───────────────────────────── */
+  kids_storage_bins: (item, c) => (
+    <>
+      {/* Bottom bin */}
+      <B p={[0, 0.18, 0]} s={[item.size.w, 0.3, item.size.d]} col={c('#9370DB')} />
+      {/* Middle bin */}
+      <B p={[0, 0.48, 0]} s={[item.size.w, 0.3, item.size.d]} col={c('#3498DB')} />
+      {/* Top bin */}
+      <B p={[0, 0.78, 0]} s={[item.size.w, 0.3, item.size.d]} col={c('#2ECC71')} />
+    </>
+  ),
+
+  /* ═══════════════════ Backyard Amenities ═══════════════ */
+
+  /* ─── BBQ Grill ──────────────────────────────────────── */
+  grill: (item, c) => (
+    <>
+      {/* Firebox / kettle body */}
+      <B p={[0, 0.85, 0]} s={[0.75, 0.5, 0.55]} col={c('#1a1a1a')} />
+      {/* Grill grate */}
+      <B p={[0, 1.12, 0]} s={[0.65, 0.03, 0.45]} col={c('#888')} />
+      {/* Lid (domed look) */}
+      <B p={[0, 1.2, 0]} s={[0.7, 0.15, 0.5]} col={c('#222')} />
+      <B p={[0, 1.3, 0]} s={[0.5, 0.08, 0.35]} col={c('#222')} />
+      {/* Lid handle */}
+      <B p={[0, 1.38, 0]} s={[0.15, 0.04, 0.04]} col={c('#C0C0C0')} cast={false} />
+      {/* Legs */}
+      {[[-0.28, -0.2], [0.28, -0.2], [-0.28, 0.2], [0.28, 0.2]].map(([lx, lz], i) => (
+        <B key={i} p={[lx, 0.35, lz]} s={[0.04, 0.7, 0.04]} col={c('#333')} />
+      ))}
+      {/* Bottom shelf */}
+      <B p={[0, 0.15, 0]} s={[0.55, 0.03, 0.4]} col={c('#333')} />
+      {/* Side shelf */}
+      <B p={[0.55, 0.85, 0]} s={[0.35, 0.03, 0.35]} col={c('#333')} />
+      <B p={[0.55, 0.5, 0]} s={[0.04, 0.7, 0.04]} col={c('#333')} />
+      {/* Red heat glow */}
+      <B p={[0, 1.08, 0]} s={[0.3, 0.02, 0.2]} col={c('#FF4500')} cast={false} />
+    </>
+  ),
+
+  /* ─── Hot Tub ────────────────────────────────────────── */
+  hot_tub: (item, c) => {
+    const r = item.size.w / 2;
+    return (
+      <>
+        {/* Outer shell - octagonal approximated as layered boxes */}
+        <B p={[0, 0.45, 0]} s={[item.size.w, 0.9, item.size.d]} col={c('#5B3A29')} />
+        <B p={[0, 0.45, 0]} s={[item.size.w * 0.85, 0.92, item.size.d * 0.85]} col={c('#5B3A29')} rotation={[0, Math.PI / 4, 0]} />
+        {/* Inner cavity */}
+        <B p={[0, 0.5, 0]} s={[item.size.w - 0.25, 0.85, item.size.d - 0.25]} col={c('#3A2015')} />
+        <B p={[0, 0.5, 0]} s={[(item.size.w - 0.25) * 0.85, 0.87, (item.size.d - 0.25) * 0.85]} col={c('#3A2015')} rotation={[0, Math.PI / 4, 0]} />
+        {/* Water surface */}
+        <mesh position={[0, 0.75, 0]}>
+          <boxGeometry args={[item.size.w - 0.35, 0.02, item.size.d - 0.35]} />
+          <meshStandardMaterial color={c('#29B6F6')} transparent opacity={0.7} />
+        </mesh>
+        {/* Rim / lip */}
+        <B p={[0, 0.92, 0]} s={[item.size.w + 0.05, 0.06, item.size.d + 0.05]} col={c('#4A2A19')} />
+        <B p={[0, 0.92, 0]} s={[(item.size.w + 0.05) * 0.85, 0.06, (item.size.d + 0.05) * 0.85]} col={c('#4A2A19')} rotation={[0, Math.PI / 4, 0]} />
+        {/* Jets (4 small nubs inside walls) */}
+        {[[0, r - 0.2], [0, -(r - 0.2)], [r - 0.2, 0], [-(r - 0.2), 0]].map(([jx, jz], i) => (
+          <B key={i} p={[jx, 0.55, jz]} s={[0.08, 0.08, 0.08]} col={c('#888')} cast={false} />
+        ))}
+        {/* Control panel (outside) */}
+        <B p={[item.size.w / 2 + 0.05, 0.65, 0]} s={[0.08, 0.2, 0.3]} col={c('#333')} cast={false} />
+        <B p={[item.size.w / 2 + 0.09, 0.7, -0.06]} s={[0.02, 0.04, 0.04]} col={c('#00E676')} cast={false} />
+        <B p={[item.size.w / 2 + 0.09, 0.7, 0.06]} s={[0.02, 0.04, 0.04]} col={c('#FF5252')} cast={false} />
+        {/* Steam wisps (decorative white rectangles slightly above water) */}
+        <mesh position={[0.3, 0.9, 0.2]}>
+          <boxGeometry args={[0.15, 0.04, 0.04]} />
+          <meshStandardMaterial color={c('#fff')} transparent opacity={0.3} />
+        </mesh>
+        <mesh position={[-0.2, 0.95, -0.1]}>
+          <boxGeometry args={[0.1, 0.04, 0.06]} />
+          <meshStandardMaterial color={c('#fff')} transparent opacity={0.25} />
+        </mesh>
+      </>
+    );
+  },
+
+  /* ─── Swimming Pool ──────────────────────────────────── */
+  swimming_pool: (item, c) => (
+    <>
+      {/* Pool floor (recessed into ground) */}
+      <B p={[0, -0.25, 0]} s={[item.size.w, 0.02, item.size.d]} col={c('#0D47A1')} />
+      {/* Pool walls (4 sides, slightly inset) */}
+      <B p={[0, 0, item.size.d / 2]} s={[item.size.w, 0.5, 0.08]} col={c('#1565C0')} />
+      <B p={[0, 0, -item.size.d / 2]} s={[item.size.w, 0.5, 0.08]} col={c('#1565C0')} />
+      <B p={[item.size.w / 2, 0, 0]} s={[0.08, 0.5, item.size.d]} col={c('#1565C0')} />
+      <B p={[-item.size.w / 2, 0, 0]} s={[0.08, 0.5, item.size.d]} col={c('#1565C0')} />
+      {/* Water surface */}
+      <mesh position={[0, 0.15, 0]}>
+        <boxGeometry args={[item.size.w - 0.15, 0.04, item.size.d - 0.15]} />
+        <meshStandardMaterial color={c('#2196F3')} transparent opacity={0.6} />
+      </mesh>
+      {/* Pool deck / coping - surrounding edge */}
+      <B p={[0, 0.27, item.size.d / 2 + 0.15]} s={[item.size.w + 0.6, 0.06, 0.35]} col={c('#E0E0E0')} />
+      <B p={[0, 0.27, -item.size.d / 2 - 0.15]} s={[item.size.w + 0.6, 0.06, 0.35]} col={c('#E0E0E0')} />
+      <B p={[item.size.w / 2 + 0.15, 0.27, 0]} s={[0.35, 0.06, item.size.d + 0.6]} col={c('#E0E0E0')} />
+      <B p={[-item.size.w / 2 - 0.15, 0.27, 0]} s={[0.35, 0.06, item.size.d + 0.6]} col={c('#E0E0E0')} />
+      {/* Pool lane lines (subtle bottom markings) */}
+      {[-1.5, 0, 1.5].map((lx, i) => (
+        <B key={i} p={[lx, -0.23, 0]} s={[0.06, 0.01, item.size.d - 0.5]} col={c('#1976D2')} cast={false} />
+      ))}
+      {/* Ladder (right side near edge) */}
+      <B p={[item.size.w / 2, 0.5, 0.6]} s={[0.04, 0.7, 0.04]} col={c('#C0C0C0')} />
+      <B p={[item.size.w / 2, 0.5, 0.2]} s={[0.04, 0.7, 0.04]} col={c('#C0C0C0')} />
+      {/* Ladder rungs */}
+      <B p={[item.size.w / 2, 0.35, 0.4]} s={[0.04, 0.04, 0.35]} col={c('#C0C0C0')} cast={false} />
+      <B p={[item.size.w / 2, 0.55, 0.4]} s={[0.04, 0.04, 0.35]} col={c('#C0C0C0')} cast={false} />
+      <B p={[item.size.w / 2, 0.75, 0.4]} s={[0.04, 0.04, 0.35]} col={c('#C0C0C0')} cast={false} />
+    </>
+  ),
+
+  /* ─── Pool Lounge Chair ──────────────────────────────── */
+  pool_chair_1: (item, c) => <PoolChairRenderer item={item} c={c} />,
+  pool_chair_2: (item, c) => <PoolChairRenderer item={item} c={c} />,
+
+  /* ─── Pool Diving Board ──────────────────────────────── */
+  pool_diving_board: (item, c) => (
+    <>
+      {/* Support base */}
+      <B p={[0, 0.2, -0.4]} s={[0.4, 0.4, 0.3]} col={c('#999')} />
+      {/* Board plank */}
+      <B p={[0, 0.42, 0.15]} s={[0.4, 0.06, 1.2]} col={c('#E0E0E0')} />
+      {/* Non-slip surface */}
+      <B p={[0, 0.46, 0.15]} s={[0.35, 0.01, 1.1]} col={c('#B0BEC5')} cast={false} />
+      {/* Side rails */}
+      <B p={[-0.18, 0.7, -0.2]} s={[0.03, 0.5, 0.03]} col={c('#C0C0C0')} />
+      <B p={[0.18, 0.7, -0.2]} s={[0.03, 0.5, 0.03]} col={c('#C0C0C0')} />
+      {/* Rail crossbar */}
+      <B p={[0, 0.92, -0.2]} s={[0.36, 0.03, 0.03]} col={c('#C0C0C0')} cast={false} />
+    </>
+  ),
 };
 
 /* ─── Reusable sub-shapes ──────────────────────────────── */
+
+function PoolChairRenderer({ item, c }) {
+  return (
+    <>
+      {/* Frame / base */}
+      <B p={[0, 0.15, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#888')} />
+      {/* Legs */}
+      {[[-0.25, -0.7], [0.25, -0.7], [-0.25, 0.7], [0.25, 0.7]].map(([lx, lz], i) => (
+        <B key={i} p={[lx, 0.08, lz]} s={[0.04, 0.14, 0.04]} col={c('#777')} />
+      ))}
+      {/* Seat pad (flat body section) */}
+      <B p={[0, 0.2, 0.15]} s={[item.size.w - 0.1, 0.06, item.size.d * 0.6]} col={c('#F5F5DC')} />
+      {/* Reclined back section */}
+      <mesh position={[0, 0.38, -0.55]} rotation={[0.5, 0, 0]}>
+        <boxGeometry args={[item.size.w - 0.1, 0.06, item.size.d * 0.35]} />
+        <meshStandardMaterial color={c('#F5F5DC')} />
+      </mesh>
+      {/* Armrests */}
+      <B p={[-0.3, 0.28, 0]} s={[0.04, 0.08, item.size.d * 0.7]} col={c('#888')} cast={false} />
+      <B p={[0.3, 0.28, 0]} s={[0.04, 0.08, item.size.d * 0.7]} col={c('#888')} cast={false} />
+    </>
+  );
+}
 
 function ChairShape({ c, color }) {
   const seatH = 0.45;
@@ -1071,6 +1742,76 @@ function ChairShape({ c, color }) {
       ))}
       {/* Back */}
       <B p={[0, seatH + 0.2, -0.18]} s={[0.38, 0.35, 0.04]} col={c(color)} />
+    </>
+  );
+}
+
+/**
+ * ClothesRodRenderer - Renders a clothes rod with hangers and hanging clothes
+ */
+function ClothesRodRenderer({ item, c, colors }) {
+  const rodH = 1.8;
+  const halfD = item.size.d / 2;
+  const numHangers = Math.max(3, Math.floor(item.size.d / 0.2));
+  const spacing = item.size.d / numHangers;
+
+  return (
+    <>
+      {/* Back panel (closet wall organizer) */}
+      <B p={[0, 1, 0]} s={[0.06, 2, item.size.d]} col={c('#DEB887')} />
+      {/* Shelf on top */}
+      <B p={[0, 2.02, 0]} s={[item.size.w, 0.04, item.size.d]} col={c('#DEB887')} cast={false} />
+      {/* Rod */}
+      <mesh position={[-0.15, rodH, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.02, 0.02, item.size.d, 8]} />
+        <meshStandardMaterial color={c('#C0C0C0')} />
+      </mesh>
+      {/* Rod brackets */}
+      <B p={[-0.15, rodH, -halfD + 0.02]} s={[0.15, 0.06, 0.04]} col={c('#999')} cast={false} />
+      <B p={[-0.15, rodH, halfD - 0.02]} s={[0.15, 0.06, 0.04]} col={c('#999')} cast={false} />
+      {/* Hanging clothes on hangers */}
+      {Array.from({ length: numHangers }).map((_, i) => {
+        const z = -halfD + 0.1 + i * spacing;
+        const clothColor = colors[i % colors.length];
+        // Deterministic height variation per garment (no Math.random — avoids re-render dance)
+        const clothH = 0.6 + ((i * 7 + 3) % 11) / 11 * 0.3;
+        return (
+          <group key={i}>
+            {/* Hanger (triangle shape simplified as small T) */}
+            <B p={[-0.15, rodH - 0.06, z]} s={[0.01, 0.12, 0.15]} col={c('#C0C0C0')} cast={false} />
+            {/* Garment */}
+            <B p={[-0.15, rodH - 0.12 - clothH / 2, z]} s={[0.04, clothH, 0.14]} col={c(clothColor)} cast={false} />
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * ShoeRackRenderer - Renders a shoe rack with shoes
+ */
+function ShoeRackRenderer({ item, c, colors }) {
+  return (
+    <>
+      {/* Rack frame */}
+      <B p={[0, item.size.h / 2, 0]} s={[item.size.w, item.size.h, item.size.d]} col={c('#8B7355')} />
+      {/* Shelf dividers */}
+      <B p={[0, item.size.h * 0.5, 0]} s={[item.size.w - 0.04, 0.03, item.size.d]} col={c('#7A6520')} cast={false} />
+      {/* Shoes (pairs) on bottom shelf */}
+      {colors.slice(0, 2).map((col, i) => (
+        <group key={`bot_${i}`}>
+          <B p={[-0.15 + i * 0.35, 0.08, 0]} s={[0.1, 0.08, 0.2]} col={c(col)} cast={false} />
+          <B p={[-0.05 + i * 0.35, 0.08, 0]} s={[0.1, 0.08, 0.2]} col={c(col)} cast={false} />
+        </group>
+      ))}
+      {/* Shoes on top shelf */}
+      {colors.slice(2, 4).map((col, i) => (
+        <group key={`top_${i}`}>
+          <B p={[-0.15 + i * 0.35, item.size.h * 0.5 + 0.06, 0]} s={[0.1, 0.08, 0.2]} col={c(col)} cast={false} />
+          <B p={[-0.05 + i * 0.35, item.size.h * 0.5 + 0.06, 0]} s={[0.1, 0.08, 0.2]} col={c(col)} cast={false} />
+        </group>
+      ))}
     </>
   );
 }

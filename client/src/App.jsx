@@ -1,18 +1,234 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, Stats } from '@react-three/drei';
+import { OrbitControls, Environment, Stats, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import House3D from './components/House3D';
 import CharacterSprite from './components/CharacterSprite';
 import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
 import { createFamily, updateFamilyMember } from './game/FamilyMemberAI';
+import { HOUSE_LAYOUT } from './game/HouseLayout';
+
+/* ════════════════════════════════════════════════════════════════
+ *  TIME / SKY HELPERS
+ * ════════════════════════════════════════════════════════════════ */
+
+function getEasternTime() {
+  // Build a Date whose local-looking fields match US-Eastern wall-clock
+  const str = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  return new Date(str);
+}
+
+function lerpRGB(a, b, t) {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+}
+
+const SKY_KEYFRAMES = [
+  { hour: 0,    color: [8, 8, 25] },
+  { hour: 5,    color: [12, 12, 35] },
+  { hour: 5.5,  color: [40, 30, 60] },
+  { hour: 6,    color: [80, 50, 80] },
+  { hour: 6.5,  color: [200, 120, 80] },
+  { hour: 7.5,  color: [170, 200, 230] },
+  { hour: 9,    color: [135, 205, 245] },
+  { hour: 12,   color: [130, 210, 255] },
+  { hour: 16,   color: [130, 195, 240] },
+  { hour: 17.5, color: [220, 160, 100] },
+  { hour: 18,   color: [200, 100, 60] },
+  { hour: 18.5, color: [80, 40, 70] },
+  { hour: 19.5, color: [20, 15, 40] },
+  { hour: 20.5, color: [10, 10, 30] },
+  { hour: 24,   color: [8, 8, 25] },
+];
+
+function sampleKeyframes(kf, hour) {
+  for (let i = 0; i < kf.length - 1; i++) {
+    if (hour >= kf[i].hour && hour < kf[i + 1].hour) {
+      const t = (hour - kf[i].hour) / (kf[i + 1].hour - kf[i].hour);
+      return lerpRGB(kf[i].color, kf[i + 1].color, t);
+    }
+  }
+  return kf[0].color;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ *  SunSystem – drives the directional light, ambient, sky colour,
+ *  visual sun / moon spheres, and keeps the game clock ticking.
+ * ════════════════════════════════════════════════════════════════ */
+
+function SunSystem({ timeSpeed, syncToReal, paused, onTimeUpdate, timeOverrideRef }) {
+  const sunRef = useRef();
+  const ambientRef = useRef();
+  const sunSphereRef = useRef();
+  const moonSphereRef = useRef();
+  const { scene } = useThree();
+  const gameTimeRef = useRef(getEasternTime());
+  const lastDisplayRef = useRef(0);
+
+  // When syncToReal flips on, snap immediately
+  useEffect(() => {
+    if (syncToReal) gameTimeRef.current = getEasternTime();
+  }, [syncToReal]);
+
+  useFrame((_, delta) => {
+    /* ── Advance clock ───────────────────────────────── */
+    if (!paused) {
+      if (syncToReal) {
+        gameTimeRef.current = getEasternTime();
+      } else {
+        const clampedDelta = Math.min(delta, 0.1);
+        gameTimeRef.current = new Date(
+          gameTimeRef.current.getTime() + clampedDelta * 1000 * timeSpeed
+        );
+      }
+    }
+
+    // Honour slider override
+    if (timeOverrideRef?.current !== null && timeOverrideRef?.current !== undefined) {
+      const h = Math.floor(timeOverrideRef.current);
+      const m = Math.floor((timeOverrideRef.current - h) * 60);
+      const d = new Date(gameTimeRef.current);
+      d.setHours(h, m, 0, 0);
+      gameTimeRef.current = d;
+      timeOverrideRef.current = null;
+    }
+
+    // Throttled HUD update (~4 fps)
+    const now = performance.now();
+    if (now - lastDisplayRef.current > 250) {
+      lastDisplayRef.current = now;
+      if (onTimeUpdate) onTimeUpdate(new Date(gameTimeRef.current));
+    }
+
+    /* ── Sun maths ───────────────────────────────────── */
+    const t = gameTimeRef.current;
+    const hour = t.getHours() + t.getMinutes() / 60 + t.getSeconds() / 3600;
+
+    const SUNRISE = 6, SUNSET = 18;
+    const RADIUS = 40;
+    const isDaytime = hour >= SUNRISE && hour <= SUNSET;
+
+    let sunX, sunY, sunZ, sunIntensity, ambientIntensity;
+    let sunR, sunG, sunB;
+
+    if (isDaytime) {
+      const frac = (hour - SUNRISE) / (SUNSET - SUNRISE);          // 0 → 1
+      const angle = Math.PI * frac;
+      sunX = RADIUS * Math.cos(angle);          // +E → -W
+      sunY = RADIUS * Math.sin(angle);          // peaks at noon
+      sunZ = RADIUS * 0.25;
+
+      const hf = Math.sin(angle);               // height-factor 0→1→0
+      sunIntensity = 0.35 + hf * 1.0;
+      ambientIntensity = 0.2 + hf * 0.4;
+
+      // Sun colour: warm orange at horizon, white-ish at peak
+      const warmth = 1 - hf;
+      const sc = lerpRGB([255, 200, 110], [255, 250, 240], 1 - warmth);
+      sunR = sc[0] / 255; sunG = sc[1] / 255; sunB = sc[2] / 255;
+    } else {
+      // Night arc for the moon
+      const nightHour = hour < SUNRISE ? hour + 24 : hour;
+      const nightFrac = (nightHour - SUNSET) / (24 - (SUNSET - SUNRISE));
+      const angle = Math.PI * nightFrac;
+      sunX = -RADIUS * 0.8 * Math.cos(angle);
+      sunY = RADIUS * 0.3 * Math.sin(angle) + 5;
+      sunZ = RADIUS * 0.2;
+      sunIntensity = 0.08;
+      ambientIntensity = 0.1;
+      sunR = 0.4; sunG = 0.45; sunB = 0.7;   // cool moonlight
+    }
+
+    /* ── Apply to lights ─────────────────────────────── */
+    if (sunRef.current) {
+      sunRef.current.position.set(sunX, Math.max(sunY, 1), sunZ);
+      sunRef.current.intensity = sunIntensity;
+      sunRef.current.color.setRGB(sunR, sunG, sunB);
+    }
+    if (ambientRef.current) {
+      ambientRef.current.intensity = ambientIntensity;
+      if (isDaytime) ambientRef.current.color.setRGB(1, 0.98, 0.95);
+      else          ambientRef.current.color.setRGB(0.3, 0.35, 0.5);
+    }
+
+    /* ── Visual spheres ──────────────────────────────── */
+    if (sunSphereRef.current) {
+      sunSphereRef.current.visible = isDaytime;
+      if (isDaytime) {
+        sunSphereRef.current.position.set(sunX, sunY, sunZ);
+      }
+    }
+    if (moonSphereRef.current) {
+      moonSphereRef.current.visible = !isDaytime;
+      if (!isDaytime) {
+        moonSphereRef.current.position.set(sunX, Math.max(sunY, 1), sunZ);
+      }
+    }
+
+    /* ── Sky / fog ───────────────────────────────────── */
+    const sky = sampleKeyframes(SKY_KEYFRAMES, hour);
+    scene.background.setRGB(sky[0] / 255, sky[1] / 255, sky[2] / 255);
+    if (scene.fog) {
+      scene.fog.color.setRGB(sky[0] / 255, sky[1] / 255, sky[2] / 255);
+      scene.fog.near = isDaytime ? 40 : 20;
+      scene.fog.far  = isDaytime ? 100 : 50;
+    }
+  });
+
+  return (
+    <>
+      <ambientLight ref={ambientRef} intensity={0.5} />
+      <directionalLight
+        ref={sunRef}
+        position={[15, 20, 10]}
+        intensity={1.2}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-far={80}
+        shadow-camera-left={-30}
+        shadow-camera-right={30}
+        shadow-camera-top={30}
+        shadow-camera-bottom={-30}
+      />
+      {/* Visual sun */}
+      <mesh ref={sunSphereRef}>
+        <sphereGeometry args={[2.5, 16, 16]} />
+        <meshBasicMaterial color="#FFE484" />
+      </mesh>
+      {/* Visual moon */}
+      <mesh ref={moonSphereRef}>
+        <sphereGeometry args={[1.5, 16, 16]} />
+        <meshBasicMaterial color="#E8E8F0" />
+      </mesh>
+    </>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+ *  CompassIndicators – giant E / W / N / S labels in the world
+ * ════════════════════════════════════════════════════════════════ */
+
+function CompassIndicators() {
+  return (
+    <group>
+      <Billboard position={[38, 4, 0]}><Text fontSize={4} color="#FFD700" outlineWidth={0.2} outlineColor="#000">E</Text></Billboard>
+      <Billboard position={[-38, 4, 0]}><Text fontSize={4} color="#FFD700" outlineWidth={0.2} outlineColor="#000">W</Text></Billboard>
+      <Billboard position={[0, 4, -38]}><Text fontSize={3} color="#C0C0C0" outlineWidth={0.15} outlineColor="#000">N</Text></Billboard>
+      <Billboard position={[0, 4, 38]}><Text fontSize={3} color="#C0C0C0" outlineWidth={0.15} outlineColor="#000">S</Text></Billboard>
+    </group>
+  );
+}
 
 /**
  * GameScene - Main 3D scene containing the house and characters.
  * Exposes live family state so the sidebar can track the selected player.
  */
-function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, simSpeed, simPaused }) {
+function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights }) {
   const [family, setFamily] = useState(() => createFamily());
   const familyRef = useRef(family);
 
@@ -26,11 +242,11 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
     if (onFamilyUpdate) onFamilyUpdate(family);
   }, [family, onFamilyUpdate]);
 
-  // Game loop: update AI every frame
+  // Game loop: update AI every frame (speed = timeSpeed, clamped for sanity)
   useFrame((state, delta) => {
     if (simPaused) return;
-    // Clamp delta to prevent large jumps, then scale by sim speed
-    const dt = Math.min(delta, 0.1) * simSpeed;
+    const effectiveSpeed = syncToReal ? 1 : timeSpeed;
+    const dt = Math.min(delta, 0.1) * effectiveSpeed;
 
     setFamily(prev =>
       prev.map(member => updateFamilyMember(member, dt))
@@ -39,25 +255,20 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
 
   return (
     <>
-      {/* Lighting */}
-      <ambientLight intensity={0.5} />
-      <directionalLight
-        position={[15, 20, 15]}
-        intensity={1.2}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-camera-far={80}
-        shadow-camera-left={-25}
-        shadow-camera-right={25}
-        shadow-camera-top={25}
-        shadow-camera-bottom={-25}
+      {/* Sun / Moon / Ambient – driven by game clock */}
+      <SunSystem
+        timeSpeed={timeSpeed}
+        syncToReal={syncToReal}
+        paused={simPaused}
+        onTimeUpdate={onTimeUpdate}
+        timeOverrideRef={timeOverrideRef}
       />
-      <pointLight position={[-3, 2.5, -2]} intensity={0.4} color="#FFE4B5" />
-      <pointLight position={[3, 2.5, 2]} intensity={0.3} color="#E6E6FA" />
+
+      {/* Compass indicators */}
+      <CompassIndicators />
 
       {/* The House */}
-      <House3D onRoomHover={onRoomHover} onFurnitureHover={onFurnitureHover} onRoomClick={onRoomClick} onGroundClick={onGroundClick} visibility={visibility} />
+      <House3D onRoomHover={onRoomHover} onFurnitureHover={onFurnitureHover} onRoomClick={onRoomClick} onGroundClick={onGroundClick} visibility={visibility} roomLights={roomLights} />
 
       {/* Family Members */}
       {family.map(member => (
@@ -72,15 +283,23 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
  * otherwise slowly auto-rotates around the house center.
  * The user can always orbit / zoom freely.
  */
-function CameraController({ followTarget, autoRotate, topDown, lockOrientation }) {
+function CameraController({ followTarget, autoRotate, topDown, lockOrientation, recenter }) {
   const controlsRef = useRef();
   const { camera } = useThree();
   const targetVec = useRef(new THREE.Vector3(0, 1, 0));
   const HOME_TARGET = new THREE.Vector3(0, 1, 0);
   const LERP_SPEED = 3;
+  const isRecentering = useRef(false);
 
   // Smoothly animate camera position for top-down / 3D transitions
   const desiredPos = useRef(new THREE.Vector3(12, 10, 12));
+
+  // When recenter flag changes to true, start recentering
+  const prevRecenter = useRef(0);
+  if (recenter !== prevRecenter.current) {
+    prevRecenter.current = recenter;
+    isRecentering.current = true;
+  }
 
   useFrame((_, delta) => {
     if (!controlsRef.current) return;
@@ -88,15 +307,26 @@ function CameraController({ followTarget, autoRotate, topDown, lockOrientation }
 
     // --- Orbit target tracking ---
     if (followTarget) {
+      // Following a player: smoothly track them
       const desired = new THREE.Vector3(followTarget.x, 1, followTarget.z);
       targetVec.current.lerp(desired, 1 - Math.exp(-LERP_SPEED * delta));
       controls.target.copy(targetVec.current);
-      // When following a character, auto-rotate orbits around them
+      controls.autoRotate = autoRotate;
+      controls.autoRotateSpeed = 0.5;
+      isRecentering.current = false;
+    } else if (isRecentering.current) {
+      // Recentering after ground click: smoothly return to home
+      targetVec.current.lerp(HOME_TARGET, 1 - Math.exp(-4 * delta));
+      controls.target.copy(targetVec.current);
+      // Stop recentering once close enough
+      if (targetVec.current.distanceTo(HOME_TARGET) < 0.05) {
+        isRecentering.current = false;
+      }
       controls.autoRotate = autoRotate;
       controls.autoRotateSpeed = 0.5;
     } else {
-      targetVec.current.lerp(HOME_TARGET, 1 - Math.exp(-2 * delta));
-      controls.target.copy(targetVec.current);
+      // Free camera: let user pan wherever they want, don't override target
+      targetVec.current.copy(controls.target);
       controls.autoRotate = autoRotate;
       controls.autoRotateSpeed = 0.5;
     }
@@ -140,11 +370,11 @@ function CameraController({ followTarget, autoRotate, topDown, lockOrientation }
       target={[0, 1, 0]}
       autoRotate={autoRotate}
       autoRotateSpeed={0.5}
-      enablePan={false}
+      enablePan={true}
       mouseButtons={{
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: undefined,
-        RIGHT: undefined
+        RIGHT: THREE.MOUSE.PAN
       }}
     />
   );
@@ -163,10 +393,51 @@ export default function App() {
   const [cameraLockOrientation, setCameraLockOrientation] = useState(false);
   const [firstPerson, setFirstPerson] = useState(false);
 
-  // Simulation state
+  // Simulation / time-of-day state
   const [simPaused, setSimPaused] = useState(false);
-  const [simSpeed, setSimSpeed] = useState(1);
-  const SIM_SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
+  const [timeSpeed, setTimeSpeed] = useState(1);          // 1x, 10x, 100x, 1000x
+  const [syncToReal, setSyncToReal] = useState(false);     // lock to Eastern Time
+  const [gameTime, setGameTime] = useState(() => getEasternTime());
+  const timeOverrideRef = useRef(null);                    // slider → SunSystem
+  const TIME_SPEEDS = [1, 10, 100, 1000];
+
+  // Room lights state: { room_id: boolean }
+  const [roomLights, setRoomLights] = useState(() => {
+    const initial = {};
+    HOUSE_LAYOUT.rooms.forEach(r => { initial[r.id] = true; });
+    initial._exterior = true;
+    return initial;
+  });
+  const [lightsAuto, setLightsAuto] = useState(true);  // auto-on at dusk
+
+  // Auto-on/off based on time of day
+  useEffect(() => {
+    if (!lightsAuto || !gameTime) return;
+    const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
+    const shouldBeOn = hour >= 18 || hour < 6.5;
+    setRoomLights(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const key of Object.keys(next)) {
+        if (next[key] !== shouldBeOn) { next[key] = shouldBeOn; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [lightsAuto, gameTime]);
+
+  const toggleRoomLight = useCallback((roomId) => {
+    setRoomLights(prev => ({ ...prev, [roomId]: !prev[roomId] }));
+    setLightsAuto(false);  // manual override disables auto
+  }, []);
+
+  const setAllLights = useCallback((on) => {
+    setRoomLights(prev => {
+      const next = {};
+      Object.keys(prev).forEach(k => { next[k] = on; });
+      return next;
+    });
+    setLightsAuto(false);
+  }, []);
 
   const toggleVisibility = useCallback((key) => {
     setVisibility(prev => ({ ...prev, [key]: !prev[key] }));
@@ -195,10 +466,13 @@ export default function App() {
     setSidePaneData({ type: 'room', payload: { ...room } });
   }, []);
 
+  const [recenterCounter, setRecenterCounter] = useState(0);
+
   const handleGroundClick = useCallback(() => {
     setSelectedPlayerName(null);
     setCameraFollowTarget(null);
     setSidePaneData(null);
+    setRecenterCounter(c => c + 1);
   }, []);
 
   const handleCloseSidePane = useCallback(() => {
@@ -219,10 +493,13 @@ export default function App() {
           }
           return prev;
         });
-        setCameraFollowTarget({ x: member.position.x, z: member.position.z });
+        // Don't update camera follow target in first-person mode
+        if (!firstPerson) {
+          setCameraFollowTarget({ x: member.position.x, z: member.position.z });
+        }
       }
     }
-  }, [selectedPlayerName]);
+  }, [selectedPlayerName, firstPerson]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -279,8 +556,12 @@ export default function App() {
           selectedPlayerName={selectedPlayerName}
           onFamilyUpdate={handleFamilyUpdate}
           visibility={visibility}
-          simSpeed={simSpeed}
+          timeSpeed={timeSpeed}
+          syncToReal={syncToReal}
           simPaused={simPaused}
+          onTimeUpdate={setGameTime}
+          timeOverrideRef={timeOverrideRef}
+          roomLights={roomLights}
         />
         {firstPerson ? (
           <FirstPersonController
@@ -288,7 +569,7 @@ export default function App() {
             spawnPosition={cameraFollowTarget || { x: 0, z: 2 }}
           />
         ) : (
-          <CameraController followTarget={cameraFollowTarget} autoRotate={cameraAutoRotate} topDown={cameraTopDown} lockOrientation={cameraLockOrientation} />
+          <CameraController followTarget={cameraFollowTarget} autoRotate={cameraAutoRotate} topDown={cameraTopDown} lockOrientation={cameraLockOrientation} recenter={recenterCounter} />
         )}
       </Canvas>
 
@@ -316,6 +597,28 @@ export default function App() {
         </div>
       )}
 
+      {/* Time-of-day HUD (top right) */}
+      <TimeHUD
+        gameTime={gameTime}
+        timeSpeed={timeSpeed}
+        syncToReal={syncToReal}
+        paused={simPaused}
+        onSetTimeSpeed={(s) => { setTimeSpeed(s); setSyncToReal(false); }}
+        onToggleSyncReal={() => setSyncToReal(p => !p)}
+        onSetHour={(h) => { timeOverrideRef.current = h; setSyncToReal(false); }}
+        onTogglePaused={() => setSimPaused(p => !p)}
+      />
+
+      {/* Light switches panel */}
+      <LightSwitchPanel
+        roomLights={roomLights}
+        onToggle={toggleRoomLight}
+        onAllOn={() => setAllLights(true)}
+        onAllOff={() => setAllLights(false)}
+        lightsAuto={lightsAuto}
+        onToggleAuto={() => setLightsAuto(p => !p)}
+      />
+
       {/* Controls panel */}
       <ControlsPanel
         visibility={visibility}
@@ -328,11 +631,6 @@ export default function App() {
         onToggleLockOrientation={() => setCameraLockOrientation(p => !p)}
         firstPerson={firstPerson}
         onToggleFirstPerson={() => { setFirstPerson(p => !p); setCameraTopDown(false); }}
-        simPaused={simPaused}
-        onTogglePaused={() => setSimPaused(p => !p)}
-        simSpeed={simSpeed}
-        simSpeeds={SIM_SPEEDS}
-        onSetSimSpeed={setSimSpeed}
       />
 
       {/* Side Pane */}
@@ -390,7 +688,10 @@ function RoomLegend({ hoveredRoom }) {
     { id: 'bathroom', name: 'Bathroom', color: '#B0C4DE' },
     { id: 'laundry', name: 'Laundry Room', color: '#C4AEAD' },
     { id: 'hallway', name: 'Hallway', color: '#A0522D' },
-    { id: 'garage', name: 'Garage', color: '#808080' }
+    { id: 'garage', name: 'Garage', color: '#808080' },
+    { id: 'closet_master', name: 'Master Closet', color: '#B8A88A' },
+    { id: 'closet_kids', name: 'Kids Closet', color: '#C9A6D8' },
+    { id: 'backyard', name: 'Backyard', color: '#5dba6a' }
   ];
 
   return (
@@ -439,14 +740,100 @@ function RoomLegend({ hoveredRoom }) {
   );
 }
 
+/* ════════════════════════════════════════════════════════════════
+ *  LightSwitchPanel – per-room light toggle, top-left below title
+ * ════════════════════════════════════════════════════════════════ */
+
+const ROOM_LIGHT_LABELS = [
+  { id: 'living_room', label: 'Living Room', icon: '\uD83D\uDECB' },
+  { id: 'kitchen', label: 'Kitchen', icon: '\uD83C\uDF73' },
+  { id: 'hallway', label: 'Hallway', icon: '\uD83D\uDEAA' },
+  { id: 'bedroom_master', label: 'Master Bed', icon: '\uD83D\uDECF' },
+  { id: 'bathroom', label: 'Bathroom', icon: '\uD83D\uDEC1' },
+  { id: 'laundry', label: 'Laundry', icon: '\uD83E\uDDFA' },
+  { id: 'bedroom_kids_shared', label: 'Kids Shared', icon: '\uD83E\uDDF8' },
+  { id: 'bedroom_kids_single', label: 'Kids Room', icon: '\uD83C\uDFA8' },
+  { id: 'garage', label: 'Garage', icon: '\uD83D\uDE97' },
+  { id: 'closet_master', label: 'Master Closet', icon: '\uD83D\uDC54' },
+  { id: 'closet_kids', label: 'Kids Closet', icon: '\uD83D\uDC57' },
+  { id: '_exterior', label: 'Exterior', icon: '\uD83C\uDFE0' },
+];
+
+function LightSwitchPanel({ roomLights, onToggle, onAllOn, onAllOff, lightsAuto, onToggleAuto }) {
+  const allOn = Object.values(roomLights).every(Boolean);
+  const allOff = Object.values(roomLights).every(v => !v);
+
+  return (
+    <div style={{
+      position: 'absolute', top: 90, left: 20, zIndex: 10,
+      background: 'rgba(0,0,0,0.82)', borderRadius: 10,
+      padding: '10px 14px', minWidth: 180,
+      fontFamily: '"Courier New", monospace', color: '#fff',
+      border: '1px solid rgba(255,215,0,0.15)', backdropFilter: 'blur(6px)',
+      maxHeight: 'calc(100vh - 120px)', overflowY: 'auto',
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#FFD700', marginBottom: 6, letterSpacing: 1 }}>
+        LIGHT SWITCHES
+      </div>
+
+      {/* Master controls */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+        <button onClick={onAllOn} style={lightMasterBtnStyle(!allOff && allOn)}>All On</button>
+        <button onClick={onAllOff} style={lightMasterBtnStyle(allOff)}>All Off</button>
+        <button onClick={onToggleAuto} style={{
+          ...lightMasterBtnStyle(lightsAuto),
+          border: lightsAuto ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
+          color: lightsAuto ? '#4ADE80' : '#888',
+          background: lightsAuto ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)',
+        }}>Auto</button>
+      </div>
+
+      {/* Per-room toggles */}
+      {ROOM_LIGHT_LABELS.map(r => {
+        const on = roomLights[r.id] !== false;
+        return (
+          <button
+            key={r.id}
+            onClick={() => onToggle(r.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+              background: on ? 'rgba(255,230,100,0.1)' : 'rgba(255,255,255,0.03)',
+              border: on ? '1px solid rgba(255,230,100,0.35)' : '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 4, padding: '3px 8px', marginBottom: 2, cursor: 'pointer',
+              fontFamily: '"Courier New", monospace', fontSize: 11,
+              color: on ? '#FFE664' : '#555', transition: 'all 0.15s ease',
+            }}
+          >
+            <span style={{ fontSize: 13 }}>{r.icon}</span>
+            <span style={{ flex: 1, textAlign: 'left' }}>{r.label}</span>
+            <span style={{
+              width: 14, height: 14, borderRadius: 7,
+              background: on ? '#FFE664' : '#333',
+              border: on ? '1px solid #FFD700' : '1px solid #444',
+              boxShadow: on ? '0 0 6px rgba(255,230,100,0.5)' : 'none',
+              transition: 'all 0.15s ease',
+            }} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const lightMasterBtnStyle = (active) => ({
+  flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
+  fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
+  border: active ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
+  background: active ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
+  color: active ? '#FFD700' : '#888', transition: 'all 0.15s ease',
+});
+
 function ControlsPanel({
   visibility, onToggleVisibility,
   cameraAutoRotate, onToggleAutoRotate,
   cameraTopDown, onToggleTopDown,
   cameraLockOrientation, onToggleLockOrientation,
-  firstPerson, onToggleFirstPerson,
-  simPaused, onTogglePaused,
-  simSpeed, simSpeeds, onSetSimSpeed
+  firstPerson, onToggleFirstPerson
 }) {
   const btnStyle = (on) => ({
     display: 'flex', alignItems: 'center', gap: 8,
@@ -500,31 +887,6 @@ function ControlsPanel({
       backdropFilter: 'blur(6px)',
       border: '1px solid rgba(255,215,0,0.15)'
     }}>
-      {/* ── Simulation ── */}
-      <SectionTitle>Simulation</SectionTitle>
-      <ToggleBtn on={!simPaused} onClick={onTogglePaused} icon={simPaused ? '>' : '||'} label={simPaused ? 'Resume' : 'Pause'} />
-
-      {/* Speed selector */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        <span style={{ color: '#aaa', fontSize: 11, marginRight: 4 }}>Speed:</span>
-        {simSpeeds.map(s => (
-          <button
-            key={s}
-            onClick={() => onSetSimSpeed(s)}
-            style={{
-              padding: '3px 7px', borderRadius: 4, cursor: 'pointer',
-              fontFamily: '"Courier New", monospace', fontSize: 11,
-              border: s === simSpeed ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
-              background: s === simSpeed ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
-              color: s === simSpeed ? '#FFD700' : '#888',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            {s}x
-          </button>
-        ))}
-      </div>
-
       {/* ── Camera ── */}
       <SectionTitle>Camera</SectionTitle>
       <ToggleBtn on={firstPerson} onClick={onToggleFirstPerson} icon="[FP]" label="First Person" />
@@ -537,6 +899,107 @@ function ControlsPanel({
       <ToggleBtn on={visibility.walls} onClick={() => onToggleVisibility('walls')} icon="[W]" label="Walls" />
       <ToggleBtn on={visibility.doors} onClick={() => onToggleVisibility('doors')} icon="[D]" label="Doors" />
       <ToggleBtn on={visibility.furniture} onClick={() => onToggleVisibility('furniture')} icon="[F]" label="Furniture" />
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+ *  TimeHUD – top-right overlay: clock, date, slider, speed btns
+ * ════════════════════════════════════════════════════════════════ */
+
+function TimeHUD({ gameTime, timeSpeed, syncToReal, paused, onSetTimeSpeed, onToggleSyncReal, onSetHour, onTogglePaused }) {
+  if (!gameTime) return null;
+
+  const hours   = gameTime.getHours();
+  const minutes = gameTime.getMinutes();
+  const seconds = gameTime.getSeconds();
+  const ampm    = hours >= 12 ? 'PM' : 'AM';
+  const dh      = hours % 12 || 12;
+  const timeStr = `${dh}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${ampm}`;
+  const dateStr = gameTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const hourFloat = hours + minutes / 60;
+  const isDaytime = hourFloat >= 6 && hourFloat < 18;
+
+  const speedBtn = (label, value) => {
+    const active = !syncToReal && timeSpeed === value;
+    return (
+      <button
+        key={value}
+        onClick={() => onSetTimeSpeed(value)}
+        style={{
+          padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+          fontFamily: '"Courier New", monospace', fontSize: 11,
+          border: active ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
+          background: active ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
+          color: active ? '#FFD700' : '#888', transition: 'all 0.15s ease'
+        }}
+      >{label}</button>
+    );
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', top: 20, right: 20, zIndex: 10,
+      background: 'rgba(0,0,0,0.82)', borderRadius: 10,
+      padding: '14px 18px', minWidth: 210,
+      fontFamily: '"Courier New", monospace', color: '#fff',
+      border: '1px solid rgba(255,215,0,0.15)', backdropFilter: 'blur(6px)',
+    }}>
+      {/* Date */}
+      <div style={{ fontSize: 11, color: '#aaa', marginBottom: 2 }}>{dateStr}</div>
+
+      {/* Clock + sun/moon icon */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 22, fontWeight: 'bold', color: '#FFD700', letterSpacing: 1 }}>{timeStr}</span>
+        <span style={{ fontSize: 22 }}>{isDaytime ? '\u2600' : '\u263E'}</span>
+      </div>
+
+      {/* Time-of-day slider */}
+      <div style={{ marginBottom: 10 }}>
+        <input
+          type="range" min={0} max={24} step={0.25} value={hourFloat}
+          onChange={(e) => onSetHour(parseFloat(e.target.value))}
+          style={{ width: '100%', cursor: 'pointer', accentColor: '#FFD700' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#555' }}>
+          <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+        </div>
+      </div>
+
+      {/* Pause / Play */}
+      <div style={{ marginBottom: 8 }}>
+        <button
+          onClick={onTogglePaused}
+          style={{
+            width: '100%', padding: '5px 0', borderRadius: 5, cursor: 'pointer',
+            fontFamily: '"Courier New", monospace', fontSize: 12, fontWeight: 'bold',
+            border: paused ? '1px solid #FF6347' : '1px solid rgba(74,222,128,0.4)',
+            background: paused ? 'rgba(255,99,71,0.15)' : 'rgba(74,222,128,0.1)',
+            color: paused ? '#FF6347' : '#4ADE80', transition: 'all 0.15s ease',
+          }}
+        >
+          {paused ? '> RESUME' : '|| PAUSE'}
+        </button>
+      </div>
+
+      {/* Speed buttons */}
+      <div style={{ fontSize: 10, fontWeight: 'bold', color: '#FFD700', marginBottom: 4, letterSpacing: 1 }}>SPEED</div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {speedBtn('1x', 1)}
+        {speedBtn('10x', 10)}
+        {speedBtn('100x', 100)}
+        {speedBtn('1000x', 1000)}
+        <button
+          onClick={onToggleSyncReal}
+          style={{
+            padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+            fontFamily: '"Courier New", monospace', fontSize: 11,
+            border: syncToReal ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
+            background: syncToReal ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.05)',
+            color: syncToReal ? '#4ADE80' : '#888', transition: 'all 0.15s ease',
+          }}
+        >EST</button>
+      </div>
     </div>
   );
 }

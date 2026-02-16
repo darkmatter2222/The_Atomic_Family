@@ -7,7 +7,8 @@
  * Coordinate system: X = left/right, Y = up (always 0 for floor), Z = forward/back
  * All measurements in world units. 1 unit ≈ 1 meter.
  * 
- * House interior: x ∈ [-10, 10], z ∈ [-7, 7]
+ * House interior: x ∈ [-10, 13], z ∈ [-7, 7]
+ * Closets on right side: Master closet x ∈ [10, 13] z ∈ [-7, -2], Kids closet x ∈ [10, 13] z ∈ [2, 7]
  * Garage attached to kitchen side: x ∈ [-10, -4], z ∈ [7, 12]
  * Front of house faces +Z (toward the street).
  */
@@ -60,7 +61,7 @@ export const HOUSE_LAYOUT = {
     {
       id: 'laundry',
       name: 'Laundry Room',
-      bounds: { minX: 5, maxX: 10, minZ: -2, maxZ: 2 },
+      bounds: { minX: 5, maxX: 13, minZ: -2, maxZ: 2 },
       floorColor: '#C4AEAD',
       wallColor: '#F5F5F5'
     },
@@ -84,6 +85,20 @@ export const HOUSE_LAYOUT = {
       bounds: { minX: -10, maxX: -4, minZ: 7, maxZ: 12 },
       floorColor: '#808080',
       wallColor: '#D3D3D3'
+    },
+    {
+      id: 'closet_master',
+      name: 'Master Closet',
+      bounds: { minX: 10, maxX: 13, minZ: -7, maxZ: -2 },
+      floorColor: '#B8A88A',
+      wallColor: '#F0EDE8'
+    },
+    {
+      id: 'closet_kids',
+      name: 'Kids Closet',
+      bounds: { minX: 10, maxX: 13, minZ: 2, maxZ: 7 },
+      floorColor: '#C9A6D8',
+      wallColor: '#FFF0F5'
     }
   ],
 
@@ -102,13 +117,69 @@ export const HOUSE_LAYOUT = {
     // Garage access from kitchen
     { from: 'kitchen', to: 'garage', position: { x: -7, z: 7 }, axis: 'x', width: 1.2 },
     // Front door (hallway to outside, at front wall z = 7)
-    { from: 'hallway', to: 'outside', position: { x: 0, z: 7 }, axis: 'x', width: 1.4 }
+    { from: 'hallway', to: 'outside', position: { x: 0, z: 7 }, axis: 'x', width: 1.4 },
+    // Back door (hallway to backyard, at rear wall z = -7)
+    { from: 'hallway', to: 'outside_back', position: { x: 0, z: -7 }, axis: 'x', width: 1.4 },
+    // Closet doors
+    { from: 'bedroom_master', to: 'closet_master', position: { x: 10, z: -4.5 }, axis: 'z', width: 1.2 },
+    { from: 'bedroom_kids_single', to: 'closet_kids', position: { x: 10, z: 4.5 }, axis: 'z', width: 1.0 },
+    // Laundry room opening (no physical door – open pass-through at x=10 between z=-2 and z=2)
+    { from: 'laundry', to: 'laundry', position: { x: 10, z: 0 }, axis: 'z', width: 4.0, visible: false }
+  ],
+
+  // --- Light fixtures ---
+  // Each entry: { id, room, type, position:{x,y,z}, color, intensity, distance }
+  //   type: 'ceiling' | 'lamp' | 'exterior' | 'porch'
+  lights: [
+    // ─── Kitchen ──────────────────────────────────────
+    { id: 'light_kitchen_1', room: 'kitchen', type: 'ceiling', position: { x: -6, y: 2.9, z: 3.5 }, color: '#FFF5E0', intensity: 2.0, distance: 14 },
+    { id: 'light_kitchen_2', room: 'kitchen', type: 'ceiling', position: { x: -6, y: 2.9, z: 5.5 }, color: '#FFF5E0', intensity: 1.4, distance: 11 },
+
+    // ─── Living Room ──────────────────────────────────
+    { id: 'light_living_1', room: 'living_room', type: 'ceiling', position: { x: -5.5, y: 2.9, z: -3.5 }, color: '#FFF8E7', intensity: 1.8, distance: 14 },
+    { id: 'light_living_lamp', room: 'living_room', type: 'lamp', position: { x: -9, y: 0.65, z: -5.8 }, color: '#FFE4B5', intensity: 1.0, distance: 7 },
+
+    // ─── Hallway ──────────────────────────────────────
+    { id: 'light_hallway_1', room: 'hallway', type: 'ceiling', position: { x: 0, y: 2.9, z: -3 }, color: '#FFF5E0', intensity: 1.2, distance: 10 },
+    { id: 'light_hallway_2', room: 'hallway', type: 'ceiling', position: { x: 0, y: 2.9, z: 3 }, color: '#FFF5E0', intensity: 1.2, distance: 10 },
+
+    // ─── Master Bedroom ───────────────────────────────
+    { id: 'light_master_1', room: 'bedroom_master', type: 'ceiling', position: { x: 5.5, y: 2.9, z: -4.5 }, color: '#FFF8E7', intensity: 1.8, distance: 14 },
+    { id: 'light_master_lamp_l', room: 'bedroom_master', type: 'lamp', position: { x: 3.5, y: 0.65, z: -6 }, color: '#FFE4B5', intensity: 0.9, distance: 6 },
+    { id: 'light_master_lamp_r', room: 'bedroom_master', type: 'lamp', position: { x: 7.5, y: 0.65, z: -6 }, color: '#FFE4B5', intensity: 0.9, distance: 6 },
+
+    // ─── Bathroom ─────────────────────────────────────
+    { id: 'light_bathroom', room: 'bathroom', type: 'ceiling', position: { x: 3.2, y: 2.9, z: 0 }, color: '#FFFFFF', intensity: 1.5, distance: 9 },
+
+    // ─── Laundry Room ─────────────────────────────────
+    { id: 'light_laundry_1', room: 'laundry', type: 'ceiling', position: { x: 7, y: 2.9, z: 0 }, color: '#FFF5E0', intensity: 1.4, distance: 10 },
+    { id: 'light_laundry_2', room: 'laundry', type: 'ceiling', position: { x: 11, y: 2.9, z: 0 }, color: '#FFF5E0', intensity: 1.4, distance: 10 },
+
+    // ─── Shared Kids Room ─────────────────────────────
+    { id: 'light_kids_shared', room: 'bedroom_kids_shared', type: 'ceiling', position: { x: 3.5, y: 2.9, z: 4.5 }, color: '#FFF8E7', intensity: 1.8, distance: 12 },
+
+    // ─── Single Kids Room ─────────────────────────────
+    { id: 'light_kids_single', room: 'bedroom_kids_single', type: 'ceiling', position: { x: 7.5, y: 2.9, z: 4.5 }, color: '#FFF8E7', intensity: 1.8, distance: 12 },
+
+    // ─── Garage ───────────────────────────────────────
+    { id: 'light_garage', room: 'garage', type: 'ceiling', position: { x: -7, y: 2.9, z: 9.5 }, color: '#FFFFFF', intensity: 1.8, distance: 14 },
+
+    // ─── Closets ──────────────────────────────────────
+    { id: 'light_closet_master', room: 'closet_master', type: 'ceiling', position: { x: 11.5, y: 2.9, z: -4.5 }, color: '#FFF8E7', intensity: 1.0, distance: 7 },
+    { id: 'light_closet_kids', room: 'closet_kids', type: 'ceiling', position: { x: 11.5, y: 2.9, z: 4.5 }, color: '#FFF8E7', intensity: 1.0, distance: 7 },
+
+    // ─── Exterior / Porch ─────────────────────────────
+    { id: 'light_porch_front', room: '_exterior', type: 'porch', position: { x: 0, y: 3.2, z: 7.5 }, color: '#FFE4B5', intensity: 1.4, distance: 12 },
+    { id: 'light_porch_back', room: '_exterior', type: 'porch', position: { x: 0, y: 3.2, z: -7.5 }, color: '#FFE4B5', intensity: 1.0, distance: 9 },
+    { id: 'light_garage_ext', room: '_exterior', type: 'porch', position: { x: -7, y: 3.5, z: 12.3 }, color: '#FFF5E0', intensity: 1.2, distance: 12 },
   ],
 
   // --- Exterior elements (rendered separately from rooms) ---
   exterior: {
-    // Lawn surrounds entire property
-    lawn: { minX: -13, maxX: 13, minZ: -10, maxZ: 14, color: '#5dba6a' },
+    // Lawn surrounds entire property (extended for backyard and closets)
+    lawn: { minX: -13, maxX: 16, minZ: -20, maxZ: 14, color: '#5dba6a' },
+    // Back patio (just behind the house)
+    patio: { minX: -9, maxX: 9, minZ: -9.5, maxZ: -7, color: '#9B8B7A' },
     // Driveway from garage to curb (does not extend into street)
     driveway: { minX: -9, maxX: -5, minZ: 12, maxZ: 15, color: '#6B6B6B' },
     // Sidewalk runs the full width, in front of lawn
@@ -126,14 +197,15 @@ export const HOUSE_LAYOUT = {
       { position: { x: -2, z: 8.5 }, size: { w: 2, d: 0.8 } },
       { position: { x: 5, z: 8.5 }, size: { w: 3, d: 0.8 } }
     ],
-    // Picket fence around the property
+    // Picket fence around the property (extended for backyard and closets)
     fence: {
-      bounds: { minX: -12.5, maxX: 12.5, minZ: -9.5, maxZ: 13.5 },
+      bounds: { minX: -12.5, maxX: 15.5, minZ: -19.5, maxZ: 13.5 },
       color: '#FFFFFF',
       height: 0.8,
       gates: [
         { side: 'front', center: 0, width: 1.6 },
-        { side: 'front', center: -7, width: 4.0 }
+        { side: 'front', center: -7, width: 4.0 },
+        { side: 'back', center: 0, width: 1.6 }
       ]
     }
   },
@@ -176,12 +248,17 @@ export const HOUSE_LAYOUT = {
     { id: 'bath_mirror', label: 'Mirror', room: 'bathroom', position: { x: 2.2, y: 1.2, z: -1.7 }, size: { w: 0.6, h: 0.8, d: 0.05 }, color: '#C0E8FF' },
     { id: 'bath_mat', label: 'Bath Mat', room: 'bathroom', position: { x: 3.3, y: 0, z: -0.5 }, size: { w: 1, h: 0.02, d: 0.6 }, color: '#5DADE2' },
 
-    // ═══════════════════ Laundry Room ═══════════════════
-    { id: 'washer', label: 'Washing Machine', room: 'laundry', position: { x: 9.3, y: 0, z: 0 }, size: { w: 0.8, h: 1, d: 0.7 }, color: '#E0E0E0', rotationY: Math.PI },
-    { id: 'dryer', label: 'Dryer', room: 'laundry', position: { x: 9.3, y: 0, z: 1 }, size: { w: 0.8, h: 1, d: 0.7 }, color: '#E0E0E0', rotationY: Math.PI },
-    { id: 'utility_sink', label: 'Utility Sink', room: 'laundry', position: { x: 9.3, y: 0, z: -1.2 }, size: { w: 0.6, h: 0.9, d: 0.5 }, color: '#B0B0B0', rotationY: -Math.PI / 2 },
+    // ═══════════════════ Laundry Room (extended) ═══════════════════
+    { id: 'washer', label: 'Washing Machine', room: 'laundry', position: { x: 12.3, y: 0, z: -0.5 }, size: { w: 0.8, h: 1, d: 0.7 }, color: '#E0E0E0', rotationY: Math.PI },
+    { id: 'dryer', label: 'Dryer', room: 'laundry', position: { x: 12.3, y: 0, z: 0.5 }, size: { w: 0.8, h: 1, d: 0.7 }, color: '#E0E0E0', rotationY: Math.PI },
+    { id: 'utility_sink', label: 'Utility Sink', room: 'laundry', position: { x: 12.3, y: 0, z: 1.5 }, size: { w: 0.6, h: 0.9, d: 0.5 }, color: '#B0B0B0', rotationY: Math.PI },
+    { id: 'folding_table', label: 'Folding Table', room: 'laundry', position: { x: 9.5, y: 0, z: 0 }, size: { w: 2.5, h: 0.9, d: 1.2 }, color: '#DEB887' },
     { id: 'laundry_basket', label: 'Laundry Basket', room: 'laundry', position: { x: 6, y: 0, z: 0 }, size: { w: 0.6, h: 0.7, d: 0.6 }, color: '#C4A35A' },
-    { id: 'ironing_board', label: 'Ironing Board', room: 'laundry', position: { x: 7, y: 0, z: 1.2 }, size: { w: 0.4, h: 0.9, d: 1.2 }, color: '#A9A9A9' },
+    { id: 'laundry_basket_2', label: 'Sorting Basket', room: 'laundry', position: { x: 6, y: 0, z: 1 }, size: { w: 0.6, h: 0.7, d: 0.6 }, color: '#8B6F47' },
+    { id: 'ironing_board', label: 'Ironing Board', room: 'laundry', position: { x: 7.5, y: 0, z: 1.3 }, size: { w: 0.4, h: 0.9, d: 1.2 }, color: '#A9A9A9' },
+    { id: 'laundry_shelf', label: 'Supply Shelf', room: 'laundry', position: { x: 5.5, y: 0, z: -1.5 }, size: { w: 0.6, h: 1.6, d: 0.5 }, color: '#696969' },
+    { id: 'drying_rack', label: 'Drying Rack', room: 'laundry', position: { x: 10.5, y: 0, z: -1.3 }, size: { w: 1.2, h: 1.5, d: 0.5 }, color: '#C0C0C0' },
+    { id: 'steam_press', label: 'Steam Press', room: 'laundry', position: { x: 8, y: 0, z: -1.3 }, size: { w: 0.6, h: 0.4, d: 0.5 }, color: '#4A4A4A' },
 
     // ═══════════════════ Shared Kids Room (2 beds) ═══════════════════
     { id: 'kids_bed_1', label: 'Bed 1', room: 'bedroom_kids_shared', position: { x: 2.5, y: 0, z: 5.5 }, size: { w: 1.5, h: 0.5, d: 2 }, color: '#FF69B4', rotationY: Math.PI },
@@ -199,7 +276,46 @@ export const HOUSE_LAYOUT = {
     { id: 'car', label: 'Family Car', room: 'garage', position: { x: -7, y: 0, z: 9.5 }, size: { w: 2.2, h: 1.4, d: 4.2 }, color: '#1E3A5F' },
     { id: 'workbench', label: 'Workbench', room: 'garage', position: { x: -4.7, y: 0, z: 8 }, size: { w: 0.8, h: 1, d: 1.5 }, color: '#5C3317' },
     { id: 'tool_shelf', label: 'Tool Shelf', room: 'garage', position: { x: -4.7, y: 0, z: 11 }, size: { w: 0.7, h: 1.8, d: 1.2 }, color: '#696969' },
-    { id: 'bike', label: 'Bicycle', room: 'garage', position: { x: -9.3, y: 0, z: 11 }, size: { w: 0.5, h: 1, d: 1.8 }, color: '#CD5C5C' }
+    { id: 'bike', label: 'Bicycle', room: 'garage', position: { x: -9.3, y: 0, z: 11 }, size: { w: 0.5, h: 1, d: 1.8 }, color: '#CD5C5C' },
+    { id: 'lawn_mower', label: 'Lawn Mower', room: 'garage', position: { x: -9.3, y: 0, z: 8.5 }, size: { w: 0.6, h: 0.5, d: 1.0 }, color: '#228B22' },
+
+    // ═══════════════════ Master Closet (walk-in) ═══════════════════
+    { id: 'master_clothes_rod_l', label: 'Clothes Rod (Left)', room: 'closet_master', position: { x: 12.5, y: 0, z: -5.5 }, size: { w: 0.6, h: 2, d: 2.5 }, color: '#8B7355' },
+    { id: 'master_clothes_rod_r', label: 'Clothes Rod (Right)', room: 'closet_master', position: { x: 12.5, y: 0, z: -3.2 }, size: { w: 0.6, h: 2, d: 1.2 }, color: '#8B7355' },
+    { id: 'master_shoe_rack', label: 'Shoe Rack', room: 'closet_master', position: { x: 10.8, y: 0, z: -6 }, size: { w: 1, h: 0.6, d: 0.5 }, color: '#5C3317' },
+    { id: 'master_mirror', label: 'Full-Length Mirror', room: 'closet_master', position: { x: 10.5, y: 0.9, z: -4 }, size: { w: 0.1, h: 1.8, d: 0.7 }, color: '#C0E8FF' },
+    { id: 'master_storage_box', label: 'Storage Box', room: 'closet_master', position: { x: 12.3, y: 0, z: -4.5 }, size: { w: 0.8, h: 0.5, d: 0.6 }, color: '#B0A090' },
+
+    // ═══════════════════ Kids Closet (shared) ═══════════════════
+    { id: 'kids_clothes_rod_1', label: 'Clothes Rod', room: 'closet_kids', position: { x: 12.5, y: 0, z: 3.5 }, size: { w: 0.6, h: 1.7, d: 1.5 }, color: '#FF69B4' },
+    { id: 'kids_clothes_rod_2', label: 'Clothes Rod', room: 'closet_kids', position: { x: 12.5, y: 0, z: 5.5 }, size: { w: 0.6, h: 1.7, d: 1.5 }, color: '#4169E1' },
+    { id: 'kids_shoe_rack', label: 'Shoe Rack', room: 'closet_kids', position: { x: 10.8, y: 0, z: 6 }, size: { w: 1, h: 0.5, d: 0.5 }, color: '#DEB887' },
+    { id: 'kids_costume_box', label: 'Costume Box', room: 'closet_kids', position: { x: 10.8, y: 0, z: 3.2 }, size: { w: 0.8, h: 0.5, d: 0.6 }, color: '#FFD700' },
+    { id: 'kids_storage_bins', label: 'Storage Bins', room: 'closet_kids', position: { x: 12.3, y: 0, z: 4.5 }, size: { w: 0.7, h: 0.8, d: 0.7 }, color: '#9370DB' },
+
+    // ═══════════════════ Backyard ═══════════════════
+    // -- Patio area --
+    { id: 'grill', label: 'BBQ Grill', room: 'backyard', position: { x: -7, y: 0, z: -8.5 }, size: { w: 0.8, h: 1.2, d: 0.6 }, color: '#1a1a1a' },
+    { id: 'hot_tub', label: 'Hot Tub', room: 'backyard', position: { x: 7, y: 0, z: -8.5 }, size: { w: 2.5, h: 0.9, d: 2.5 }, color: '#5B3A29' },
+    { id: 'picnic_table', label: 'Picnic Table', room: 'backyard', position: { x: -3, y: 0, z: -8.5 }, size: { w: 2, h: 0.8, d: 1.2 }, color: '#8B4513' },
+    // -- Swimming Pool --
+    { id: 'swimming_pool', label: 'Swimming Pool', room: 'backyard', position: { x: 3, y: 0, z: -12 }, size: { w: 6, h: 0.3, d: 4 }, color: '#2196F3' },
+    { id: 'pool_chair_1', label: 'Lounge Chair', room: 'backyard', position: { x: 7, y: 0, z: -11 }, size: { w: 0.7, h: 0.4, d: 1.8 }, color: '#F5F5DC' },
+    { id: 'pool_chair_2', label: 'Lounge Chair', room: 'backyard', position: { x: 7, y: 0, z: -13 }, size: { w: 0.7, h: 0.4, d: 1.8 }, color: '#F5F5DC' },
+    { id: 'pool_diving_board', label: 'Diving Board', room: 'backyard', position: { x: 3, y: 0, z: -14.2 }, size: { w: 0.5, h: 0.5, d: 1.5 }, color: '#E0E0E0' },
+    // -- Playground area (further back) --
+    { id: 'swing_set', label: 'Swing Set', room: 'backyard', position: { x: -6, y: 0, z: -15 }, size: { w: 4, h: 2.8, d: 2 }, color: '#8B4513' },
+    { id: 'slide', label: 'Slide', room: 'backyard', position: { x: -1, y: 0, z: -16 }, size: { w: 1.2, h: 2.2, d: 3 }, color: '#FF4500' },
+    { id: 'sandbox', label: 'Sandbox', room: 'backyard', position: { x: -6, y: 0, z: -18 }, size: { w: 3, h: 0.4, d: 3 }, color: '#F4D03F' },
+    { id: 'monkey_bars', label: 'Monkey Bars', room: 'backyard', position: { x: -1, y: 0, z: -19 }, size: { w: 3.5, h: 2.2, d: 1.2 }, color: '#4682B4' },
+    { id: 'trampoline', label: 'Trampoline', room: 'backyard', position: { x: 4, y: 0, z: -18 }, size: { w: 2.5, h: 0.9, d: 2.5 }, color: '#2C3E50' },
+    // -- Scattered items --
+    { id: 'soccer_ball', label: 'Soccer Ball', room: 'backyard', position: { x: -9, y: 0, z: -12 }, size: { w: 0.3, h: 0.3, d: 0.3 }, color: '#EEEEEE' },
+    { id: 'basketball', label: 'Basketball', room: 'backyard', position: { x: -8, y: 0, z: -11 }, size: { w: 0.3, h: 0.3, d: 0.3 }, color: '#E87511' },
+    { id: 'beach_ball', label: 'Beach Ball', room: 'backyard', position: { x: 9, y: 0, z: -12 }, size: { w: 0.4, h: 0.4, d: 0.4 }, color: '#FF69B4' },
+    { id: 'jump_rope', label: 'Jump Rope', room: 'backyard', position: { x: -9, y: 0, z: -15 }, size: { w: 0.8, h: 0.05, d: 0.3 }, color: '#E74C3C' },
+    // -- Garden shed --
+    { id: 'garden_shed', label: 'Garden Shed', room: 'backyard', position: { x: 11, y: 0, z: -17 }, size: { w: 2, h: 2.2, d: 2 }, color: '#7B5B3A' }
   ]
 };
 
@@ -211,10 +327,10 @@ export const HOUSE_LAYOUT = {
  */
 export function createWalkableGrid(resolution = 2) {
   const layout = HOUSE_LAYOUT;
-  // Grid covers entire house + garage + front lawn area
+  // Grid covers entire house + closets + garage + front lawn + backyard area
   const minX = -12;
-  const maxX = 12;
-  const minZ = -9;
+  const maxX = 15;
+  const minZ = -19; // extended for backyard
   const maxZ = 14; // up to the sidewalk
 
   const gridWidth = Math.ceil((maxX - minX) * resolution);
@@ -350,7 +466,16 @@ export function gridToWorld(gx, gz, gridData) {
  */
 export function getRandomPositionInRoom(roomId) {
   const room = HOUSE_LAYOUT.rooms.find(r => r.id === roomId);
-  if (!room) return { x: 0, z: 0 };
+  if (!room) {
+    // Handle backyard as a special area
+    if (roomId === 'backyard') {
+      const margin = 1;
+      const x = -11 + margin + Math.random() * (11 - (-11) - margin * 2);
+      const z = -19 + margin + Math.random() * (-8 - (-19) - margin * 2);
+      return { x, z };
+    }
+    return { x: 0, z: 0 };
+  }
 
   const margin = 0.5; // stay away from walls
   const x = room.bounds.minX + margin + Math.random() * (room.bounds.maxX - room.bounds.minX - margin * 2);
@@ -359,10 +484,14 @@ export function getRandomPositionInRoom(roomId) {
 }
 
 /**
- * Get a random walkable position anywhere in the house
+ * Get a random walkable position anywhere in the house or backyard
  */
 export function getRandomWalkablePosition() {
   const rooms = HOUSE_LAYOUT.rooms;
+  // 20% chance to pick the backyard
+  if (Math.random() < 0.2) {
+    return { ...getRandomPositionInRoom('backyard'), room: 'backyard' };
+  }
   const room = rooms[Math.floor(Math.random() * rooms.length)];
   return { ...getRandomPositionInRoom(room.id), room: room.id };
 }
@@ -375,6 +504,54 @@ export function getRoomAtPosition(x, z) {
     const b = room.bounds;
     if (x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) {
       return room.id;
+    }
+  }
+  // Check backyard area (behind the house)
+  if (x >= -12 && x <= 12 && z >= -19 && z < -7) {
+    return 'backyard';
+  }
+  return null;
+}
+
+/**
+ * Get the surface height at a world XZ position.
+ * Returns the top of the tallest piece of furniture the position is inside,
+ * or 0 (floor level) when standing on open floor.
+ * Uses a small body radius so the player needs to be mostly on top of the object.
+ */
+export function getSurfaceHeight(x, z, bodyRadius = 0.2) {
+  let maxH = 0;
+  for (const furn of HOUSE_LAYOUT.furniture) {
+    const halfW = furn.size.w / 2;
+    const halfD = furn.size.d / 2;
+    if (
+      x >= furn.position.x - halfW - bodyRadius &&
+      x <= furn.position.x + halfW + bodyRadius &&
+      z >= furn.position.z - halfD - bodyRadius &&
+      z <= furn.position.z + halfD + bodyRadius
+    ) {
+      const top = furn.size.h;
+      if (top > maxH) maxH = top;
+    }
+  }
+  return maxH;
+}
+
+/**
+ * Get furniture item (if any) at a world XZ position.
+ * Optionally filters by a maximum height the player can step over.
+ */
+export function getFurnitureAt(x, z) {
+  for (const furn of HOUSE_LAYOUT.furniture) {
+    const halfW = furn.size.w / 2;
+    const halfD = furn.size.d / 2;
+    if (
+      x >= furn.position.x - halfW &&
+      x <= furn.position.x + halfW &&
+      z >= furn.position.z - halfD &&
+      z <= furn.position.z + halfD
+    ) {
+      return furn;
     }
   }
   return null;

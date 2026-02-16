@@ -99,14 +99,10 @@ export default function CharacterSprite({ member, camera, onClick }) {
       </mesh>
       {/* Name label above sprite */}
       <NameLabel name={member.name} height={spriteHeight / 2 + 0.15} />
-      {/* Small shadow on ground */}
-      <mesh 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, -spriteHeight / 2 + 0.02, 0]}
-        scale={[1, 0.4, 1]}
-      >
-        <circleGeometry args={[spriteWidth * 0.4, 16]} />
-        <meshBasicMaterial color="black" transparent opacity={0.3} />
+      {/* Shadow-casting proxy: non-billboarding upright box that casts directional shadows */}
+      <mesh castShadow position={[0, 0, 0]}>
+        <boxGeometry args={[spriteWidth * 0.4, spriteHeight * 0.9, spriteWidth * 0.25]} />
+        <meshBasicMaterial colorWrite={false} depthWrite={false} />
       </mesh>
     </group>
   );
