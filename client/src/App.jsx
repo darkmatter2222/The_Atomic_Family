@@ -6,7 +6,7 @@ import House3D from './components/House3D';
 import CharacterSprite from './components/CharacterSprite';
 import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
-import { createFamily, updateFamilyMember } from './game/FamilyMemberAI';
+import { createFamily, updateFamilyMember, commandFamilyMember } from './game/FamilyMemberAI';
 import { HOUSE_LAYOUT } from './game/HouseLayout';
 
 /* ════════════════════════════════════════════════════════════════
@@ -228,7 +228,7 @@ function CompassIndicators() {
  * GameScene - Main 3D scene containing the house and characters.
  * Exposes live family state so the sidebar can track the selected player.
  */
-function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights, gameTime, firstPerson }) {
+function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights, gameTime, firstPerson, commandRef }) {
   const [family, setFamily] = useState(() => createFamily());
   const familyRef = useRef(family);
   const gameTimeRef = useRef(gameTime);
@@ -241,6 +241,19 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
   useEffect(() => {
     if (onFamilyUpdate) onFamilyUpdate(family);
   }, [family, onFamilyUpdate]);
+
+  // Process pending player command (from SidePane action buttons)
+  useFrame(() => {
+    if (commandRef?.current) {
+      const { memberName, interactionId } = commandRef.current;
+      commandRef.current = null;
+      setFamily(prev =>
+        prev.map(m =>
+          m.name === memberName ? commandFamilyMember(m, interactionId) : m
+        )
+      );
+    }
+  });
 
   // Game loop: update AI every frame (speed = timeSpeed, clamped for sanity)
   useFrame((state, delta) => {
@@ -462,6 +475,7 @@ export default function App() {
   const [selectedPlayerName, setSelectedPlayerName] = useState(null);
   const [cameraFollowTarget, setCameraFollowTarget] = useState(null);
   const familyRef = useRef([]);
+  const commandRef = useRef(null);  // { memberName, interactionId } — consumed by GameScene
 
   const handleRoomHover = useCallback((room) => {
     setHoveredRoom(room);
@@ -610,6 +624,7 @@ export default function App() {
           roomLights={roomLights}
           gameTime={gameTime}
           firstPerson={firstPerson}
+          commandRef={commandRef}
         />
         {firstPerson ? (
           <FirstPersonController
@@ -688,7 +703,15 @@ export default function App() {
       )}
 
       {/* Side Pane */}
-      {panelVis.sidePane && <SidePane data={sidePaneData} onClose={handleCloseSidePane} />}
+      {panelVis.sidePane && (
+        <SidePane
+          data={sidePaneData}
+          onClose={handleCloseSidePane}
+          onCommandAction={(memberName, interactionId) => {
+            commandRef.current = { memberName, interactionId };
+          }}
+        />
+      )}
     </div>
   );
 }

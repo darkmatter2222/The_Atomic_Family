@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { HOUSE_LAYOUT } from '../game/HouseLayout';
+import { getInteractionsForRole, filterByTimeWindow } from '../game/InteractionData';
 
 /**
  * SidePane - Sliding info panel that appears when clicking players or rooms.
@@ -10,7 +11,7 @@ import { HOUSE_LAYOUT } from '../game/HouseLayout';
  *  - data: { type: 'player' | 'room', payload: Object } | null
  *  - onClose: () => void
  */
-export default function SidePane({ data, onClose }) {
+export default function SidePane({ data, onClose, onCommandAction }) {
   const isOpen = data !== null;
 
   return (
@@ -81,7 +82,7 @@ export default function SidePane({ data, onClose }) {
           ✕
         </button>
 
-        {data?.type === 'player' && <PlayerPanel member={data.payload} />}
+        {data?.type === 'player' && <PlayerPanel member={data.payload} onCommandAction={onCommandAction} />}
         {data?.type === 'room' && <RoomPanel room={data.payload} />}
       </div>
     </div>
@@ -196,9 +197,48 @@ function getRoomDisplayName(roomId) {
   return room ? room.name : roomId || 'Unknown';
 }
 
-function PlayerPanel({ member }) {
+function PlayerPanel({ member, onCommandAction }) {
   const roleColor = ROLE_COLORS[member.role] || '#aaa';
   const stateInfo = STATE_LABELS[member.state] || { text: member.state, color: '#aaa' };
+
+  // Available actions for this character, grouped by category
+  const [openCategory, setOpenCategory] = useState(null);
+  const [searchText, setSearchText] = useState('');
+
+  const availableActions = useMemo(() => {
+    const roleActions = getInteractionsForRole(member.role);
+    // Group by category
+    const grouped = {};
+    for (const action of roleActions) {
+      if (!grouped[action.category]) grouped[action.category] = [];
+      grouped[action.category].push(action);
+    }
+    // Sort categories alphabetically, sort actions within by priority desc
+    const sorted = {};
+    for (const cat of Object.keys(grouped).sort()) {
+      sorted[cat] = grouped[cat].sort((a, b) => b.priority - a.priority);
+    }
+    return sorted;
+  }, [member.role]);
+
+  // Filter by search text
+  const filteredActions = useMemo(() => {
+    if (!searchText.trim()) return availableActions;
+    const q = searchText.toLowerCase();
+    const result = {};
+    for (const [cat, actions] of Object.entries(availableActions)) {
+      const matches = actions.filter(a =>
+        a.label.toLowerCase().includes(q) ||
+        a.description.toLowerCase().includes(q) ||
+        a.category.toLowerCase().includes(q) ||
+        a.room.toLowerCase().includes(q)
+      );
+      if (matches.length > 0) result[cat] = matches;
+    }
+    return result;
+  }, [availableActions, searchText]);
+
+  const totalActions = Object.values(filteredActions).reduce((sum, arr) => sum + arr.length, 0);
 
   return (
     <div>
@@ -271,8 +311,93 @@ function PlayerPanel({ member }) {
         </>
       )}
 
-      <StatRow label="Walk Speed" value={`${member.walkSpeed.toFixed(1)} m/s`} />
-      <StatRow label="Facing" value={member.facingRight ? '→ Right' : '← Left'} />
+      <Divider />
+
+      {/* ═══════ ACTIONS — Command this character ═══════ */}
+      <SectionHeader label={`Actions (${totalActions})`} color="#FF9800" />
+
+      {/* Search bar */}
+      <div style={{ marginBottom: 8 }}>
+        <input
+          type="text"
+          placeholder="Search actions..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            borderRadius: 5,
+            border: '1px solid rgba(255,152,0,0.3)',
+            background: 'rgba(255,255,255,0.06)',
+            color: '#e0e0e0',
+            fontFamily: '"Courier New", monospace',
+            fontSize: 11,
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
+      {/* Category accordion */}
+      {Object.entries(filteredActions).map(([category, actions]) => {
+        const catColor = CATEGORY_COLORS[category] || '#aaa';
+        const isOpen = openCategory === category || searchText.trim() !== '';
+        const catIcon = CATEGORY_ICONS_SIDE[category] || '📋';
+
+        return (
+          <div key={category} style={{ marginBottom: 4 }}>
+            {/* Category header (toggle) */}
+            <button
+              onClick={() => setOpenCategory(prev => prev === category ? null : category)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                width: '100%',
+                padding: '5px 8px',
+                borderRadius: 5,
+                cursor: 'pointer',
+                fontFamily: '"Courier New", monospace',
+                fontSize: 11,
+                fontWeight: 'bold',
+                textTransform: 'capitalize',
+                background: isOpen ? `${catColor}18` : 'rgba(255,255,255,0.03)',
+                border: isOpen ? `1px solid ${catColor}44` : '1px solid rgba(255,255,255,0.06)',
+                color: isOpen ? catColor : '#888',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span style={{ fontSize: 13 }}>{catIcon}</span>
+              <span style={{ flex: 1, textAlign: 'left' }}>{category}</span>
+              <span style={{ fontSize: 10, color: '#666' }}>({actions.length})</span>
+              <span style={{ fontSize: 10, transition: 'transform 0.15s ease', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+            </button>
+
+            {/* Expanded action list */}
+            {isOpen && (
+              <div style={{ paddingLeft: 6, paddingTop: 4 }}>
+                {actions.map(action => (
+                  <ActionButton
+                    key={action.id}
+                    action={action}
+                    catColor={catColor}
+                    isCurrentAction={member.currentInteraction?.id === action.id}
+                    onClick={() => {
+                      if (onCommandAction) onCommandAction(member.name, action.id);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {totalActions === 0 && searchText.trim() && (
+        <div style={{ color: '#555', fontSize: 11, fontStyle: 'italic', marginTop: 4 }}>
+          No actions match "{searchText}"
+        </div>
+      )}
 
       <Divider />
 
@@ -280,6 +405,8 @@ function PlayerPanel({ member }) {
       <SectionHeader label="Position" color="#60A5FA" />
       <StatRow label="X" value={member.position.x.toFixed(2)} />
       <StatRow label="Z" value={member.position.z.toFixed(2)} />
+      <StatRow label="Walk Speed" value={`${member.walkSpeed.toFixed(1)} m/s`} />
+      <StatRow label="Facing" value={member.facingRight ? '→ Right' : '← Left'} />
       {member.path && member.path.length > 0 && (
         <StatRow
           label="Path Progress"
@@ -325,6 +452,95 @@ function PlayerPanel({ member }) {
       </div>
     </div>
   );
+}
+
+/* ─── Category icons for the action accordion ───────────────────────── */
+
+const CATEGORY_ICONS_SIDE = {
+  cooking:       '🍳',
+  eating:        '🍽️',
+  hygiene:       '🚿',
+  chores:        '🧹',
+  sleeping:      '💤',
+  entertainment: '🎬',
+  exercise:      '🏃',
+  social:        '💬',
+  relaxing:      '☕',
+  education:     '📚',
+  errand:        '🚗',
+  hobby:         '🎨',
+  routine:       '⚙️',
+  transit:       '🚶',
+};
+
+/* ─── ActionButton — single command action a player can be told to do ─ */
+
+function ActionButton({ action, catColor, isCurrentAction, onClick }) {
+  const roomLabel = getRoomDisplayName(action.room);
+  const timeLabel = action.timeWindow
+    ? `${formatHour(action.timeWindow.start)}–${formatHour(action.timeWindow.end)}`
+    : 'Anytime';
+
+  return (
+    <button
+      onClick={onClick}
+      title={action.description}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        width: '100%',
+        padding: '5px 8px',
+        marginBottom: 3,
+        borderRadius: 4,
+        cursor: 'pointer',
+        fontFamily: '"Courier New", monospace',
+        textAlign: 'left',
+        background: isCurrentAction ? `${catColor}25` : 'rgba(255,255,255,0.03)',
+        border: isCurrentAction ? `1px solid ${catColor}66` : '1px solid rgba(255,255,255,0.06)',
+        color: '#ddd',
+        transition: 'all 0.12s ease',
+      }}
+      onMouseEnter={e => {
+        if (!isCurrentAction) {
+          e.currentTarget.style.background = `${catColor}18`;
+          e.currentTarget.style.borderColor = `${catColor}44`;
+        }
+      }}
+      onMouseLeave={e => {
+        if (!isCurrentAction) {
+          e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+        }
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {isCurrentAction && (
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: catColor, boxShadow: `0 0 4px ${catColor}`,
+            flexShrink: 0,
+          }} />
+        )}
+        <span style={{ fontSize: 12, fontWeight: isCurrentAction ? 'bold' : 'normal', color: isCurrentAction ? catColor : '#ddd' }}>
+          {action.label}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, fontSize: 9, color: '#666' }}>
+        <span>{roomLabel}</span>
+        <span>·</span>
+        <span>{timeLabel}</span>
+        <span>·</span>
+        <span>{action.duration.min}–{action.duration.max}m</span>
+      </div>
+    </button>
+  );
+}
+
+function formatHour(h) {
+  const hr = Math.floor(h) % 12 || 12;
+  const ampm = h < 12 || h >= 24 ? 'a' : 'p';
+  return `${hr}${ampm}`;
 }
 
 /* ─── Room Panel ────────────────────────────────────────────────────── */

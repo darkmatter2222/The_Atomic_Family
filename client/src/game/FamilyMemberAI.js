@@ -11,6 +11,7 @@ import { findPath, smoothPath } from './Pathfinding';
 import { createWalkableGrid, worldToGrid, getRandomWalkablePosition, getRoomAtPosition, HOUSE_LAYOUT } from './HouseLayout';
 import {
   INTERACTION_CATALOG,
+  INTERACTION_MAP,
   getInteractionsForRole,
   filterByTimeWindow,
   rollDuration
@@ -493,6 +494,69 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
       }
       break;
     }
+  }
+
+  return updated;
+}
+
+/**
+ * Command a family member to perform a specific interaction.
+ * Interrupts whatever they're currently doing, pathfinds to the target
+ * furniture, and starts the activity.
+ *
+ * @param {Object} member        – current member state
+ * @param {string} interactionId – id from INTERACTION_CATALOG
+ * @returns {Object} updated member state
+ */
+export function commandFamilyMember(member, interactionId) {
+  const interaction = INTERACTION_MAP[interactionId];
+  if (!interaction) return member;
+
+  const updated = { ...member };
+
+  // Reset Y in case they were on furniture
+  updated.position = { ...updated.position, y: 0 };
+
+  // Find destination using per-furniture interaction zones
+  const dest = getInteractionPosition(interaction.furnitureId);
+
+  if (!dest) {
+    // Room-level or exterior action — perform in place
+    updated.currentInteraction = interaction;
+    updated.interactionTimer = 0;
+    updated.interactionDuration = rollDuration(interaction) * 60;
+    updated.activityLabel = interaction.label;
+    updated.activityAnim = interaction.animation;
+    updated.targetFurniture = null;
+    updated.state = STATE.PERFORMING;
+    return updated;
+  }
+
+  // Pathfind to the interaction position
+  const startGrid = worldToGrid(updated.position.x, updated.position.z, gridData);
+  const endGrid = worldToGrid(dest.x, dest.z, gridData);
+  const rawPath = findPath(gridData.grid, startGrid, endGrid);
+
+  if (rawPath.length > 1) {
+    // Walk to the furniture
+    updated.path = smoothPath(rawPath, gridData);
+    updated.pathIndex = 0;
+    updated.currentInteraction = interaction;
+    updated.activityLabel = interaction.label;
+    updated.activityAnim = 'walk';
+    updated.targetFurniture = dest.atFurniture;
+    updated.state = STATE.WALKING;
+  } else {
+    // Already adjacent — snap and perform immediately
+    const snapped = snapToFurnitureCenter(updated.position, dest.atFurniture);
+    updated.position = snapped;
+    updated.currentInteraction = interaction;
+    updated.interactionTimer = 0;
+    updated.interactionDuration = rollDuration(interaction) * 60;
+    updated.activityLabel = interaction.label;
+    updated.activityAnim = interaction.animation;
+    updated.targetFurniture = dest.atFurniture;
+    updated.state = STATE.PERFORMING;
   }
 
   return updated;
