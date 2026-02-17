@@ -1,0 +1,3590 @@
+{
+  "_meta": {
+    "version": "2.0.0",
+    "description": "Master interaction catalog for The Atomic Family. Every possible action, its timing, positioning, sprite animation, needs effects, skill effects, and display data — all in one file. 112 interactions, 14 categories, 8 needs, 7 skills, relationships, inventory.",
+    "schema": {
+      "id": "Unique interaction key",
+      "furnitureId": "Matching furniture id from HouseLayout (or _room_<id> / _exterior_<id> for non-furniture)",
+      "label": "Human-readable short action label shown in UI",
+      "room": "Room id where this happens (or _exterior / _any)",
+      "duration": "{ min, max } in GAME MINUTES — AI picks random value in range",
+      "timeWindow": "{ start, end } game-hour range (0-24); null = anytime; wraps midnight if start > end",
+      "eligibleRoles": "Array of roles that can do this, or null = everyone. Roles: father, mother, son, daughter",
+      "category": "Grouping tag for weighting, scheduling, and visual effects",
+      "priority": "Base weight 1-10 (higher = more likely to be chosen by AI)",
+      "description": "Flavor text explaining the action",
+      "animation": "Sprite pose hint: 'sit', 'sleep', 'use', 'walk'",
+      "poseTransform": "Sprite scale/offset when performing: { yOffset, scaleX, scaleY } — multiplied by spriteHeight",
+      "icon": "Emoji icon displayed in the activity bubble above character's head",
+      "positioning": {
+        "approachSide": "'front'(-Z), 'back'(+Z), 'left'(-X), 'right'(+X), 'center'(on furniture)",
+        "standOffset": "Distance from furniture edge (ignored for 'center')",
+        "snapTo": "Redirect to different furniture id (e.g. tv → couch)",
+        "snapToNearest": "Random pick from list of furniture ids"
+      },
+      "needsEffects": "Object mapping need name → total change for the interaction (positive = restores, negative = depletes)",
+      "skillEffects": "Object mapping skill name → XP gained for performing this interaction"
+    }
+  },
+  "categories": {
+    "cooking": {
+      "icon": "🍳",
+      "color": "#FF6B35"
+    },
+    "eating": {
+      "icon": "🍽️",
+      "color": "#4CAF50"
+    },
+    "hygiene": {
+      "icon": "🚿",
+      "color": "#2196F3"
+    },
+    "chores": {
+      "icon": "🧹",
+      "color": "#9C27B0"
+    },
+    "sleeping": {
+      "icon": "💤",
+      "color": "#1A237E"
+    },
+    "entertainment": {
+      "icon": "🎬",
+      "color": "#E91E63"
+    },
+    "exercise": {
+      "icon": "🏃",
+      "color": "#FF9800"
+    },
+    "social": {
+      "icon": "💬",
+      "color": "#00BCD4"
+    },
+    "relaxing": {
+      "icon": "☕",
+      "color": "#795548"
+    },
+    "education": {
+      "icon": "📚",
+      "color": "#3F51B5"
+    },
+    "errand": {
+      "icon": "🚗",
+      "color": "#607D8B"
+    },
+    "hobby": {
+      "icon": "🎨",
+      "color": "#FF5722"
+    },
+    "routine": {
+      "icon": "⚙️",
+      "color": "#9E9E9E"
+    },
+    "transit": {
+      "icon": "🚶",
+      "color": "#BDBDBD"
+    }
+  },
+  "poseTransforms": {
+    "sleep": {
+      "yOffset": -0.32,
+      "scaleX": 1.4,
+      "scaleY": 0.4
+    },
+    "sit": {
+      "yOffset": -0.22,
+      "scaleX": 1.05,
+      "scaleY": 0.72
+    },
+    "use": {
+      "yOffset": -0.03,
+      "scaleX": 1,
+      "scaleY": 0.95
+    },
+    "walk": {
+      "yOffset": 0,
+      "scaleX": 1,
+      "scaleY": 1
+    }
+  },
+  "furnitureZones": {
+    "fridge": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "sink": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "dishwasher": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "stove": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "microwave": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "pantry": {
+      "approachSide": "right",
+      "standOffset": 0.6
+    },
+    "kitchen_table": {
+      "approachSide": "center",
+      "snapToNearest": [
+        "kitchen_chair_1",
+        "kitchen_chair_2"
+      ]
+    },
+    "kitchen_chair_1": {
+      "approachSide": "center"
+    },
+    "kitchen_chair_2": {
+      "approachSide": "center"
+    },
+    "couch": {
+      "approachSide": "center"
+    },
+    "loveseat": {
+      "approachSide": "center"
+    },
+    "tv_stand": {
+      "snapTo": "couch"
+    },
+    "tv": {
+      "snapTo": "couch"
+    },
+    "coffee_table": {
+      "snapTo": "couch"
+    },
+    "bookshelf": {
+      "snapTo": "couch"
+    },
+    "end_table": {
+      "snapTo": "loveseat"
+    },
+    "master_bed": {
+      "approachSide": "center"
+    },
+    "nightstand_l": {
+      "approachSide": "right",
+      "standOffset": 0.4
+    },
+    "nightstand_r": {
+      "approachSide": "left",
+      "standOffset": 0.4
+    },
+    "dresser": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "wardrobe": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "toilet": {
+      "approachSide": "center"
+    },
+    "shower": {
+      "approachSide": "center"
+    },
+    "bath_sink": {
+      "approachSide": "back",
+      "standOffset": 0.5
+    },
+    "bath_mirror": {
+      "approachSide": "back",
+      "standOffset": 0.5
+    },
+    "washer": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "dryer": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "utility_sink": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "folding_table": {
+      "approachSide": "front",
+      "standOffset": 0.5
+    },
+    "laundry_basket": {
+      "approachSide": "front",
+      "standOffset": 0.4
+    },
+    "laundry_basket_2": {
+      "approachSide": "front",
+      "standOffset": 0.4
+    },
+    "ironing_board": {
+      "approachSide": "right",
+      "standOffset": 0.5
+    },
+    "drying_rack": {
+      "approachSide": "back",
+      "standOffset": 0.5
+    },
+    "steam_press": {
+      "approachSide": "back",
+      "standOffset": 0.5
+    },
+    "laundry_shelf": {
+      "approachSide": "right",
+      "standOffset": 0.5
+    },
+    "kids_bed_1": {
+      "approachSide": "center"
+    },
+    "kids_bed_2": {
+      "approachSide": "center"
+    },
+    "kids_bed_3": {
+      "approachSide": "center"
+    },
+    "toy_box": {
+      "approachSide": "front",
+      "standOffset": 0.5
+    },
+    "kids_desk_shared": {
+      "approachSide": "center"
+    },
+    "kids_desk_single": {
+      "approachSide": "center"
+    },
+    "kids_bookshelf": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "bean_bag": {
+      "approachSide": "center"
+    },
+    "car": {
+      "approachSide": "right",
+      "standOffset": 1.2
+    },
+    "workbench": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "tool_shelf": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "bike": {
+      "approachSide": "center"
+    },
+    "lawn_mower": {
+      "approachSide": "right",
+      "standOffset": 0.5
+    },
+    "master_clothes_rod_l": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "master_clothes_rod_r": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "master_shoe_rack": {
+      "approachSide": "front",
+      "standOffset": 0.5
+    },
+    "master_mirror": {
+      "approachSide": "right",
+      "standOffset": 0.5
+    },
+    "master_storage_box": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "kids_clothes_rod_1": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "kids_clothes_rod_2": {
+      "approachSide": "left",
+      "standOffset": 0.6
+    },
+    "kids_shoe_rack": {
+      "approachSide": "front",
+      "standOffset": 0.5
+    },
+    "kids_costume_box": {
+      "approachSide": "front",
+      "standOffset": 0.5
+    },
+    "kids_storage_bins": {
+      "approachSide": "left",
+      "standOffset": 0.5
+    },
+    "grill": {
+      "approachSide": "front",
+      "standOffset": 0.6
+    },
+    "hot_tub": {
+      "approachSide": "center"
+    },
+    "picnic_table": {
+      "approachSide": "front",
+      "standOffset": 0.7
+    },
+    "swimming_pool": {
+      "approachSide": "center"
+    },
+    "pool_chair_1": {
+      "approachSide": "center"
+    },
+    "pool_chair_2": {
+      "approachSide": "center"
+    },
+    "pool_diving_board": {
+      "approachSide": "center"
+    },
+    "swing_set": {
+      "approachSide": "center"
+    },
+    "slide": {
+      "approachSide": "back",
+      "standOffset": 0.6
+    },
+    "sandbox": {
+      "approachSide": "center"
+    },
+    "monkey_bars": {
+      "approachSide": "center"
+    },
+    "trampoline": {
+      "approachSide": "center"
+    },
+    "soccer_ball": {
+      "approachSide": "center"
+    },
+    "basketball": {
+      "approachSide": "center"
+    },
+    "beach_ball": {
+      "approachSide": "center"
+    },
+    "jump_rope": {
+      "approachSide": "center"
+    },
+    "garden_shed": {
+      "approachSide": "front",
+      "standOffset": 1
+    }
+  },
+  "bodyAnimDefaults": {
+    "cooking": "stand_cook",
+    "eating": "sit_eat",
+    "hygiene": "stand_scrub",
+    "chores": "stand_sweep",
+    "sleeping": "sleep_breathe",
+    "entertainment": "sit_watch",
+    "exercise": "exercise_active",
+    "social": "sit_talk",
+    "relaxing": "sit_idle",
+    "education": "sit_write",
+    "errand": "stand_use",
+    "hobby": "sit_game",
+    "routine": "stand_use",
+    "transit": "exercise_active"
+  },
+  "bodyAnimOverrides": {
+    "cook_breakfast": "stand_cook",
+    "cook_lunch": "stand_cook",
+    "cook_dinner": "stand_cook",
+    "heat_food_microwave": "stand_use",
+    "get_drink_fridge": "stand_reach",
+    "get_snack_fridge": "stand_reach",
+    "get_pantry_item": "stand_reach",
+    "wash_dishes_sink": "stand_scrub",
+    "wash_hands_kitchen": "stand_scrub",
+    "run_dishwasher": "stand_use",
+    "unload_dishwasher": "stand_reach",
+    "eat_at_table": "sit_eat",
+    "sit_at_table_chat": "sit_talk",
+    "sit_kitchen_chair": "sit_idle",
+    "watch_tv": "sit_watch",
+    "watch_morning_news": "sit_watch",
+    "sit_on_couch": "sit_idle",
+    "nap_on_couch": "sleep_breathe",
+    "sit_loveseat": "sit_idle",
+    "read_book": "sit_read",
+    "browse_coffee_table": "sit_read",
+    "sleep_night": "sleep_breathe",
+    "nap_daytime": "sleep_breathe",
+    "make_bed": "stand_fold",
+    "get_dressed_dresser": "stand_use",
+    "put_away_clothes_dresser": "stand_fold",
+    "get_outfit_wardrobe": "stand_reach",
+    "set_alarm_nightstand": "stand_use",
+    "read_in_bed": "sit_read",
+    "use_toilet": "sit_idle",
+    "take_shower": "stand_shower",
+    "morning_shower": "stand_shower",
+    "wash_hands_bathroom": "stand_scrub",
+    "brush_teeth": "stand_brush",
+    "morning_teeth": "stand_brush",
+    "night_teeth": "stand_brush",
+    "check_mirror": "stand_use",
+    "do_makeup": "stand_brush",
+    "shave": "stand_brush",
+    "do_laundry_wash": "stand_use",
+    "switch_laundry_dryer": "stand_use",
+    "fold_laundry": "stand_fold",
+    "sort_laundry": "stand_fold",
+    "sort_colors": "stand_fold",
+    "iron_clothes": "stand_push",
+    "steam_press_clothes": "stand_push",
+    "hang_clothes_dry": "stand_reach",
+    "get_cleaning_supplies": "stand_reach",
+    "hand_wash_utility": "stand_scrub",
+    "kids_sleep_night_1": "sleep_breathe",
+    "kids_sleep_night_2": "sleep_breathe",
+    "kids_sleep_night_3": "sleep_breathe",
+    "kids_nap_1": "sleep_breathe",
+    "kids_nap_3": "sleep_breathe",
+    "play_with_toys": "crouch_work",
+    "do_homework_shared": "sit_write",
+    "do_homework_single": "sit_write",
+    "draw_at_desk_shared": "sit_write",
+    "play_video_games_desk": "sit_game",
+    "read_kids_book": "sit_read",
+    "sit_bean_bag": "sit_idle",
+    "pick_clothes_closet": "stand_reach",
+    "hang_clothes_closet": "stand_reach",
+    "pick_shoes": "crouch_work",
+    "check_outfit_mirror": "stand_use",
+    "get_storage_item": "stand_reach",
+    "kids_pick_clothes": "stand_reach",
+    "kids_hang_clothes": "stand_reach",
+    "kids_pick_shoes": "crouch_work",
+    "play_dress_up": "jump_bounce",
+    "organize_bins": "crouch_work",
+    "drive_car": "sit_idle",
+    "wash_car": "stand_scrub",
+    "work_at_bench": "stand_hammer",
+    "organize_tools": "stand_use",
+    "ride_bike": "exercise_active",
+    "mow_lawn": "stand_push",
+    "walk_through_hallway": "stand_use",
+    "grill_food": "stand_cook",
+    "grill_dinner": "stand_cook",
+    "soak_hot_tub": "sit_idle",
+    "hot_tub_evening": "sit_idle",
+    "eat_picnic_table": "sit_eat",
+    "sit_picnic_table": "sit_idle",
+    "swim_in_pool": "splash_swim",
+    "swim_laps": "splash_swim",
+    "pool_cannonball": "splash_swim",
+    "diving_board_dive": "splash_swim",
+    "lounge_poolside_1": "sit_idle",
+    "lounge_poolside_2": "sit_idle",
+    "play_swings": "sit_idle",
+    "push_kid_swing": "stand_push",
+    "go_down_slide": "sit_idle",
+    "play_sandbox": "crouch_work",
+    "monkey_bars_play": "exercise_active",
+    "jump_trampoline": "jump_bounce",
+    "trampoline_adult": "jump_bounce",
+    "kick_soccer_ball": "exercise_active",
+    "shoot_hoops": "stand_throw",
+    "toss_beach_ball": "stand_throw",
+    "jump_rope_play": "jump_bounce",
+    "get_garden_tools": "stand_reach",
+    "do_yard_work": "crouch_work",
+    "tend_garden": "crouch_work",
+    "check_mail": "stand_reach",
+    "water_hedges": "stand_hold",
+    "sit_on_porch": "sit_idle",
+    "watch_sunset_porch": "sit_idle",
+    "wave_at_neighbors": "stand_wave",
+    "turn_on_lights": "stand_use",
+    "turn_off_lights": "stand_use",
+    "turn_off_lights_leaving": "stand_use"
+  },
+  "interactions": [
+    {
+      "id": "cook_breakfast",
+      "furnitureId": "stove",
+      "label": "Cook breakfast",
+      "room": "kitchen",
+      "duration": {
+        "min": 10,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "cooking",
+      "priority": 8,
+      "description": "Prepare eggs, bacon, and toast on the stove for the family.",
+      "needsEffects": {
+        "hunger": 5,
+        "energy": -3,
+        "fun": 2
+      },
+      "skillEffects": {
+        "cooking": 0.2
+      }
+    },
+    {
+      "id": "cook_lunch",
+      "furnitureId": "stove",
+      "label": "Cook lunch",
+      "room": "kitchen",
+      "duration": {
+        "min": 10,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 11,
+        "end": 13
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "cooking",
+      "priority": 6,
+      "description": "Prepare a quick lunch on the stove.",
+      "needsEffects": {
+        "hunger": 5,
+        "energy": -3,
+        "fun": 2
+      },
+      "skillEffects": {
+        "cooking": 0.2
+      }
+    },
+    {
+      "id": "cook_dinner",
+      "furnitureId": "stove",
+      "label": "Cook dinner",
+      "room": "kitchen",
+      "duration": {
+        "min": 20,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 17,
+        "end": 19
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "cooking",
+      "priority": 9,
+      "description": "Prepare a full dinner on the stove for the whole family.",
+      "needsEffects": {
+        "hunger": 5,
+        "energy": -5,
+        "fun": 3
+      },
+      "skillEffects": {
+        "cooking": 0.3
+      }
+    },
+    {
+      "id": "heat_food_microwave",
+      "furnitureId": "microwave",
+      "label": "Microwave food",
+      "room": "kitchen",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "cooking",
+      "priority": 4,
+      "description": "Reheat leftovers or cook a quick snack in the microwave.",
+      "needsEffects": {
+        "hunger": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_drink_fridge",
+      "furnitureId": "fridge",
+      "label": "Get a drink",
+      "room": "kitchen",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "eating",
+      "priority": 5,
+      "description": "Open the fridge and grab a cold drink.",
+      "needsEffects": {
+        "hydration": 25,
+        "hunger": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_snack_fridge",
+      "furnitureId": "fridge",
+      "label": "Get a snack",
+      "room": "kitchen",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "eating",
+      "priority": 4,
+      "description": "Rummage through the fridge for a snack.",
+      "needsEffects": {
+        "hunger": 15,
+        "hydration": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_pantry_item",
+      "furnitureId": "pantry",
+      "label": "Browse the pantry",
+      "room": "kitchen",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "eating",
+      "priority": 3,
+      "description": "Look through the pantry shelves for ingredients or a quick bite.",
+      "needsEffects": {
+        "hunger": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "wash_dishes_sink",
+      "furnitureId": "sink",
+      "label": "Wash dishes",
+      "room": "kitchen",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 4,
+      "description": "Scrub pots, pans, and plates in the kitchen sink.",
+      "needsEffects": {
+        "hygiene": 3,
+        "energy": -5,
+        "fun": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "wash_hands_kitchen",
+      "furnitureId": "sink",
+      "label": "Wash hands",
+      "room": "kitchen",
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 3,
+      "description": "Quickly rinse hands in the kitchen sink.",
+      "needsEffects": {
+        "hygiene": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "run_dishwasher",
+      "furnitureId": "dishwasher",
+      "label": "Run the dishwasher",
+      "room": "kitchen",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Load and start the dishwasher after a meal.",
+      "needsEffects": {
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "unload_dishwasher",
+      "furnitureId": "dishwasher",
+      "label": "Unload the dishwasher",
+      "room": "kitchen",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Put clean dishes away from the dishwasher.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "eat_at_table",
+      "furnitureId": "kitchen_table",
+      "label": "Eat a meal",
+      "room": "kitchen",
+      "duration": {
+        "min": 10,
+        "max": 25
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "eating",
+      "priority": 7,
+      "description": "Sit at the kitchen table and eat a meal.",
+      "needsEffects": {
+        "hunger": 40,
+        "hydration": 10,
+        "social": 5,
+        "comfort": 5,
+        "energy": 3,
+        "bladder": -10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sit_at_table_chat",
+      "furnitureId": "kitchen_table",
+      "label": "Chat at the table",
+      "room": "kitchen",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "social",
+      "priority": 4,
+      "description": "Sit at the kitchen table and chat with family.",
+      "needsEffects": {
+        "social": 20,
+        "fun": 5,
+        "comfort": 5
+      },
+      "skillEffects": {
+        "charisma": 0.2
+      }
+    },
+    {
+      "id": "sit_kitchen_chair",
+      "furnitureId": "kitchen_chair_1",
+      "label": "Sit in chair",
+      "room": "kitchen",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 2,
+      "description": "Pull up a kitchen chair and rest for a bit.",
+      "needsEffects": {
+        "comfort": 8,
+        "energy": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "watch_tv",
+      "furnitureId": "tv",
+      "label": "Watch TV",
+      "room": "living_room",
+      "duration": {
+        "min": 15,
+        "max": 60
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 8,
+      "description": "Sit on the couch and watch shows or movies on TV.",
+      "needsEffects": {
+        "fun": 25,
+        "comfort": 10,
+        "social": 5,
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "watch_morning_news",
+      "furnitureId": "tv",
+      "label": "Watch morning news",
+      "room": "living_room",
+      "duration": {
+        "min": 15,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 5,
+      "description": "Catch up on the morning news before the day begins.",
+      "needsEffects": {
+        "fun": 15,
+        "comfort": 8,
+        "social": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sit_on_couch",
+      "furnitureId": "couch",
+      "label": "Relax on the couch",
+      "room": "living_room",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 6,
+      "description": "Sit on the couch and relax for a while.",
+      "needsEffects": {
+        "comfort": 15,
+        "energy": 5,
+        "fun": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "nap_on_couch",
+      "furnitureId": "couch",
+      "label": "Nap on the couch",
+      "room": "living_room",
+      "duration": {
+        "min": 30,
+        "max": 90
+      },
+      "timeWindow": {
+        "start": 12,
+        "end": 17
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 3,
+      "description": "Doze off on the couch for an afternoon nap.",
+      "needsEffects": {
+        "energy": 25,
+        "comfort": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sit_loveseat",
+      "furnitureId": "loveseat",
+      "label": "Sit on loveseat",
+      "room": "living_room",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 4,
+      "description": "Settle into the loveseat for some quiet time.",
+      "needsEffects": {
+        "comfort": 15,
+        "energy": 5,
+        "fun": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "read_book",
+      "furnitureId": "bookshelf",
+      "label": "Read a book",
+      "room": "living_room",
+      "duration": {
+        "min": 15,
+        "max": 60
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 5,
+      "description": "Grab a book off the shelf and sit on the couch to read.",
+      "needsEffects": {
+        "fun": 20,
+        "comfort": 10,
+        "energy": -2
+      },
+      "skillEffects": {
+        "logic": 0.1
+      }
+    },
+    {
+      "id": "browse_coffee_table",
+      "furnitureId": "coffee_table",
+      "label": "Look at magazines",
+      "room": "living_room",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 2,
+      "description": "Sit on the couch and flip through magazines from the coffee table.",
+      "needsEffects": {
+        "fun": 10,
+        "comfort": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sleep_night",
+      "furnitureId": "master_bed",
+      "label": "Sleep for the night",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 360,
+        "max": 540
+      },
+      "timeWindow": {
+        "start": 21,
+        "end": 6
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 10,
+      "description": "Go to bed for the night. Will wake up between 5 AM and 7 AM.",
+      "needsEffects": {
+        "energy": 100,
+        "comfort": 30
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "nap_daytime",
+      "furnitureId": "master_bed",
+      "label": "Take a nap",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 60,
+        "max": 180
+      },
+      "timeWindow": {
+        "start": 12,
+        "end": 16
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 4,
+      "description": "Lie down for a midday nap.",
+      "needsEffects": {
+        "energy": 30,
+        "comfort": 15
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "make_bed",
+      "furnitureId": "master_bed",
+      "label": "Make the bed",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 10
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Straighten the sheets and fluff the pillows.",
+      "needsEffects": {
+        "comfort": 5,
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_dressed_dresser",
+      "furnitureId": "dresser",
+      "label": "Get dressed",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 3,
+        "max": 8
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 7,
+      "description": "Pick out clothes from the dresser and get dressed.",
+      "needsEffects": {
+        "hygiene": 5,
+        "comfort": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "put_away_clothes_dresser",
+      "furnitureId": "dresser",
+      "label": "Put away clothes",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Fold and stash clean laundry in the dresser.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_outfit_wardrobe",
+      "furnitureId": "wardrobe",
+      "label": "Pick an outfit",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 3,
+        "max": 10
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 4,
+      "description": "Browse hanging clothes in the wardrobe.",
+      "needsEffects": {
+        "hygiene": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "set_alarm_nightstand",
+      "furnitureId": "nightstand_l",
+      "label": "Set alarm clock",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 23
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "routine",
+      "priority": 3,
+      "description": "Set the alarm on the nightstand before bed.",
+      "needsEffects": {},
+      "skillEffects": {}
+    },
+    {
+      "id": "read_in_bed",
+      "furnitureId": "master_bed",
+      "label": "Read in bed",
+      "room": "bedroom_master",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 23
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 4,
+      "description": "Sit up in bed and read a book before sleep.",
+      "needsEffects": {
+        "fun": 15,
+        "comfort": 15,
+        "energy": -2
+      },
+      "skillEffects": {
+        "logic": 0.1
+      }
+    },
+    {
+      "id": "use_toilet",
+      "furnitureId": "toilet",
+      "label": "Use the toilet",
+      "room": "bathroom",
+      "duration": {
+        "min": 2,
+        "max": 8
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "hygiene",
+      "priority": 6,
+      "description": "Nature calls — use the toilet.",
+      "needsEffects": {
+        "bladder": 100,
+        "hygiene": -5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "take_shower",
+      "furnitureId": "shower",
+      "label": "Take a shower",
+      "room": "bathroom",
+      "duration": {
+        "min": 8,
+        "max": 20
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 7,
+      "description": "Step into the shower and get clean.",
+      "needsEffects": {
+        "hygiene": 80,
+        "comfort": 10,
+        "energy": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "morning_shower",
+      "furnitureId": "shower",
+      "label": "Morning shower",
+      "room": "bathroom",
+      "duration": {
+        "min": 10,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 8,
+      "description": "Fresh morning shower to start the day.",
+      "needsEffects": {
+        "hygiene": 85,
+        "comfort": 10,
+        "energy": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "wash_hands_bathroom",
+      "furnitureId": "bath_sink",
+      "label": "Wash hands",
+      "room": "bathroom",
+      "duration": {
+        "min": 1,
+        "max": 2
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 4,
+      "description": "Wash hands at the bathroom sink.",
+      "needsEffects": {
+        "hygiene": 8
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "brush_teeth",
+      "furnitureId": "bath_sink",
+      "label": "Brush teeth",
+      "room": "bathroom",
+      "duration": {
+        "min": 2,
+        "max": 4
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 7,
+      "description": "Brush teeth at the sink — morning and night routine.",
+      "needsEffects": {
+        "hygiene": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "morning_teeth",
+      "furnitureId": "bath_sink",
+      "label": "Brush teeth (morning)",
+      "room": "bathroom",
+      "duration": {
+        "min": 2,
+        "max": 4
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 8,
+      "description": "Morning tooth-brushing routine at the sink.",
+      "needsEffects": {
+        "hygiene": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "night_teeth",
+      "furnitureId": "bath_sink",
+      "label": "Brush teeth (bedtime)",
+      "room": "bathroom",
+      "duration": {
+        "min": 2,
+        "max": 4
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 23
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 8,
+      "description": "Brush teeth before bed.",
+      "needsEffects": {
+        "hygiene": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "check_mirror",
+      "furnitureId": "bath_mirror",
+      "label": "Check appearance",
+      "room": "bathroom",
+      "duration": {
+        "min": 1,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 2,
+      "description": "Look in the mirror — fix hair, check outfit, etc.",
+      "needsEffects": {
+        "hygiene": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "do_makeup",
+      "furnitureId": "bath_mirror",
+      "label": "Do makeup",
+      "room": "bathroom",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 10
+      },
+      "eligibleRoles": [
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 5,
+      "description": "Apply makeup in front of the bathroom mirror.",
+      "needsEffects": {
+        "hygiene": 10,
+        "fun": 5,
+        "social": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "shave",
+      "furnitureId": "bath_mirror",
+      "label": "Shave",
+      "room": "bathroom",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 5,
+      "description": "Morning shave at the mirror.",
+      "needsEffects": {
+        "hygiene": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "do_laundry_wash",
+      "furnitureId": "washer",
+      "label": "Start a wash cycle",
+      "room": "laundry",
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 5,
+      "description": "Load dirty clothes into the washing machine and start the cycle.",
+      "needsEffects": {
+        "energy": -5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "switch_laundry_dryer",
+      "furnitureId": "dryer",
+      "label": "Move clothes to dryer",
+      "room": "laundry",
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 5,
+      "description": "Transfer wet clothes from the washer to the dryer.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "fold_laundry",
+      "furnitureId": "folding_table",
+      "label": "Fold laundry",
+      "room": "laundry",
+      "duration": {
+        "min": 10,
+        "max": 25
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 5,
+      "description": "Fold clean clothes on the folding table.",
+      "needsEffects": {
+        "energy": -5,
+        "comfort": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sort_laundry",
+      "furnitureId": "laundry_basket",
+      "label": "Sort dirty laundry",
+      "room": "laundry",
+      "duration": {
+        "min": 3,
+        "max": 8
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Separate lights, darks, and delicates into baskets.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sort_colors",
+      "furnitureId": "laundry_basket_2",
+      "label": "Sort by color",
+      "room": "laundry",
+      "duration": {
+        "min": 3,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Separate clothes by color into the sorting basket.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "iron_clothes",
+      "furnitureId": "ironing_board",
+      "label": "Iron clothes",
+      "room": "laundry",
+      "duration": {
+        "min": 10,
+        "max": 20
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Press wrinkles out of shirts and pants on the ironing board.",
+      "needsEffects": {
+        "energy": -5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "steam_press_clothes",
+      "furnitureId": "steam_press",
+      "label": "Steam press a shirt",
+      "room": "laundry",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Use the steam press for a crisp finish on dress clothes.",
+      "needsEffects": {
+        "energy": -5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "hang_clothes_dry",
+      "furnitureId": "drying_rack",
+      "label": "Hang clothes to dry",
+      "room": "laundry",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Hang delicates on the drying rack.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_cleaning_supplies",
+      "furnitureId": "laundry_shelf",
+      "label": "Get cleaning supplies",
+      "room": "laundry",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Grab detergent, bleach, or cleaning sprays from the supply shelf.",
+      "needsEffects": {
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "hand_wash_utility",
+      "furnitureId": "utility_sink",
+      "label": "Hand-wash delicates",
+      "room": "laundry",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Gently hand-wash delicate items in the utility sink.",
+      "needsEffects": {
+        "energy": -5,
+        "hygiene": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_sleep_night_1",
+      "furnitureId": "kids_bed_1",
+      "label": "Go to sleep",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 480,
+        "max": 600
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 7
+      },
+      "eligibleRoles": [
+        "daughter"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 10,
+      "description": "Daughter tucks in for the night in Bed 1.",
+      "needsEffects": {
+        "energy": 100,
+        "comfort": 30
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_sleep_night_2",
+      "furnitureId": "kids_bed_2",
+      "label": "Go to sleep",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 480,
+        "max": 600
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 7
+      },
+      "eligibleRoles": [
+        "daughter"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 10,
+      "description": "Daughter tucks in for the night in Bed 2.",
+      "needsEffects": {
+        "energy": 100,
+        "comfort": 30
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_nap_1",
+      "furnitureId": "kids_bed_1",
+      "label": "Take a nap",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 30,
+        "max": 90
+      },
+      "timeWindow": {
+        "start": 13,
+        "end": 16
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 2,
+      "description": "Lie down for an afternoon nap.",
+      "needsEffects": {
+        "energy": 25,
+        "comfort": 15
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "play_with_toys",
+      "furnitureId": "toy_box",
+      "label": "Play with toys",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 7,
+      "description": "Dig through the toy box and play with action figures, dolls, or blocks.",
+      "needsEffects": {
+        "fun": 30,
+        "energy": -5,
+        "social": 5
+      },
+      "skillEffects": {
+        "creativity": 0.2
+      }
+    },
+    {
+      "id": "do_homework_shared",
+      "furnitureId": "kids_desk_shared",
+      "label": "Do homework",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 15,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "sit",
+      "category": "education",
+      "priority": 6,
+      "description": "Sit at the desk and work on school assignments.",
+      "needsEffects": {
+        "fun": -5,
+        "energy": -5
+      },
+      "skillEffects": {
+        "logic": 0.3
+      }
+    },
+    {
+      "id": "draw_at_desk_shared",
+      "furnitureId": "kids_desk_shared",
+      "label": "Draw pictures",
+      "room": "bedroom_kids_shared",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 4,
+      "description": "Get creative and draw at the desk.",
+      "needsEffects": {
+        "fun": 20,
+        "energy": -2
+      },
+      "skillEffects": {
+        "creativity": 0.3
+      }
+    },
+    {
+      "id": "kids_sleep_night_3",
+      "furnitureId": "kids_bed_3",
+      "label": "Go to sleep",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 480,
+        "max": 600
+      },
+      "timeWindow": {
+        "start": 20,
+        "end": 7
+      },
+      "eligibleRoles": [
+        "son"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 10,
+      "description": "Son goes to bed for the night.",
+      "needsEffects": {
+        "energy": 100,
+        "comfort": 30
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_nap_3",
+      "furnitureId": "kids_bed_3",
+      "label": "Take a nap",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 30,
+        "max": 90
+      },
+      "timeWindow": {
+        "start": 13,
+        "end": 16
+      },
+      "eligibleRoles": [
+        "son"
+      ],
+      "animation": "sleep",
+      "category": "sleeping",
+      "priority": 2,
+      "description": "Afternoon nap in the single kids room.",
+      "needsEffects": {
+        "energy": 25,
+        "comfort": 15
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "do_homework_single",
+      "furnitureId": "kids_desk_single",
+      "label": "Do homework",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 15,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son"
+      ],
+      "animation": "sit",
+      "category": "education",
+      "priority": 6,
+      "description": "Sit at the desk and grind through homework.",
+      "needsEffects": {
+        "fun": -5,
+        "energy": -5
+      },
+      "skillEffects": {
+        "logic": 0.3
+      }
+    },
+    {
+      "id": "play_video_games_desk",
+      "furnitureId": "kids_desk_single",
+      "label": "Play video games",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 15,
+        "max": 60
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son"
+      ],
+      "animation": "sit",
+      "category": "entertainment",
+      "priority": 6,
+      "description": "Game time at the desk.",
+      "needsEffects": {
+        "fun": 35,
+        "energy": -2,
+        "social": 3
+      },
+      "skillEffects": {
+        "logic": 0.1
+      }
+    },
+    {
+      "id": "read_kids_book",
+      "furnitureId": "bean_bag",
+      "label": "Read a book",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "sit",
+      "category": "education",
+      "priority": 4,
+      "description": "Grab a book and sit on the bean bag to read.",
+      "needsEffects": {
+        "fun": 15
+      },
+      "skillEffects": {
+        "logic": 0.2
+      }
+    },
+    {
+      "id": "sit_bean_bag",
+      "furnitureId": "bean_bag",
+      "label": "Chill on bean bag",
+      "room": "bedroom_kids_single",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 4,
+      "description": "Flop into the bean bag chair and relax.",
+      "needsEffects": {
+        "comfort": 15,
+        "fun": 5,
+        "energy": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "pick_clothes_closet",
+      "furnitureId": "master_clothes_rod_l",
+      "label": "Pick out clothes",
+      "room": "closet_master",
+      "duration": {
+        "min": 3,
+        "max": 10
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 5,
+      "description": "Browse the hanging clothes and pick an outfit.",
+      "needsEffects": {
+        "hygiene": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "hang_clothes_closet",
+      "furnitureId": "master_clothes_rod_r",
+      "label": "Hang up clothes",
+      "room": "closet_master",
+      "duration": {
+        "min": 3,
+        "max": 8
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 3,
+      "description": "Hang freshly laundered clothes back on the rod.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "pick_shoes",
+      "furnitureId": "master_shoe_rack",
+      "label": "Pick shoes",
+      "room": "closet_master",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": {
+        "start": 5,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 3,
+      "description": "Choose shoes from the rack to match the outfit.",
+      "needsEffects": {
+        "hygiene": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "check_outfit_mirror",
+      "furnitureId": "master_mirror",
+      "label": "Check outfit in mirror",
+      "room": "closet_master",
+      "duration": {
+        "min": 1,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 2,
+      "description": "Do a full-body outfit check in the full-length mirror.",
+      "needsEffects": {
+        "hygiene": 3,
+        "fun": 2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "get_storage_item",
+      "furnitureId": "master_storage_box",
+      "label": "Rummage in storage",
+      "room": "closet_master",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 1,
+      "description": "Search through the storage box for seasonal items.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_pick_clothes",
+      "furnitureId": "kids_clothes_rod_1",
+      "label": "Pick out clothes",
+      "room": "closet_kids",
+      "duration": {
+        "min": 2,
+        "max": 8
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 5,
+      "description": "Choose an outfit for the day from the closet rod.",
+      "needsEffects": {
+        "hygiene": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_hang_clothes",
+      "furnitureId": "kids_clothes_rod_2",
+      "label": "Hang up clothes",
+      "room": "closet_kids",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Put clean clothes back on the rod (with some help).",
+      "needsEffects": {
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "kids_pick_shoes",
+      "furnitureId": "kids_shoe_rack",
+      "label": "Pick shoes",
+      "room": "closet_kids",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 9
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 3,
+      "description": "Grab a pair of shoes from the rack.",
+      "needsEffects": {
+        "hygiene": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "play_dress_up",
+      "furnitureId": "kids_costume_box",
+      "label": "Play dress-up",
+      "room": "closet_kids",
+      "duration": {
+        "min": 15,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 5,
+      "description": "Dig into the costume box and play dress-up.",
+      "needsEffects": {
+        "fun": 30,
+        "social": 10,
+        "energy": -5
+      },
+      "skillEffects": {
+        "creativity": 0.2,
+        "charisma": 0.1
+      }
+    },
+    {
+      "id": "organize_bins",
+      "furnitureId": "kids_storage_bins",
+      "label": "Organize toys / storage",
+      "room": "closet_kids",
+      "duration": {
+        "min": 5,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Sort toys and supplies into the colorful storage bins.",
+      "needsEffects": {
+        "energy": -5,
+        "fun": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "drive_car",
+      "furnitureId": "car",
+      "label": "Go for a drive",
+      "room": "garage",
+      "duration": {
+        "min": 30,
+        "max": 120
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "errand",
+      "priority": 3,
+      "description": "Get in the car and run errands or take a drive.",
+      "needsEffects": {
+        "fun": 5,
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "wash_car",
+      "furnitureId": "car",
+      "label": "Wash the car",
+      "room": "garage",
+      "duration": {
+        "min": 20,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 8,
+        "end": 17
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Get a bucket and sponge and wash the family car.",
+      "needsEffects": {
+        "energy": -8,
+        "fun": 3,
+        "hygiene": -5
+      },
+      "skillEffects": {
+        "handiness": 0.1
+      }
+    },
+    {
+      "id": "work_at_bench",
+      "furnitureId": "workbench",
+      "label": "Work at the bench",
+      "room": "garage",
+      "duration": {
+        "min": 15,
+        "max": 60
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "hobby",
+      "priority": 4,
+      "description": "Tinker on a project at the workbench — fix something, build something.",
+      "needsEffects": {
+        "fun": 15,
+        "energy": -5
+      },
+      "skillEffects": {
+        "handiness": 0.3,
+        "creativity": 0.1
+      }
+    },
+    {
+      "id": "organize_tools",
+      "furnitureId": "tool_shelf",
+      "label": "Organize tools",
+      "room": "garage",
+      "duration": {
+        "min": 10,
+        "max": 20
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Sort wrenches, screwdrivers, and power tools on the shelf.",
+      "needsEffects": {
+        "energy": -3
+      },
+      "skillEffects": {
+        "handiness": 0.1
+      }
+    },
+    {
+      "id": "ride_bike",
+      "furnitureId": "bike",
+      "label": "Go for a bike ride",
+      "room": "garage",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 19
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "exercise",
+      "priority": 4,
+      "description": "Grab the bike from the garage and ride around the neighborhood.",
+      "needsEffects": {
+        "energy": -15,
+        "fun": 10,
+        "hygiene": -10
+      },
+      "skillEffects": {
+        "fitness": 0.3
+      }
+    },
+    {
+      "id": "mow_lawn",
+      "furnitureId": "lawn_mower",
+      "label": "Mow the lawn",
+      "room": "garage",
+      "duration": {
+        "min": 30,
+        "max": 60
+      },
+      "timeWindow": {
+        "start": 8,
+        "end": 18
+      },
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 4,
+      "description": "Fire up the mower and cut the grass. It's getting shaggy out there.",
+      "needsEffects": {
+        "energy": -15,
+        "fun": 3,
+        "hygiene": -10
+      },
+      "skillEffects": {
+        "gardening": 0.1,
+        "fitness": 0.1
+      }
+    },
+    {
+      "id": "walk_through_hallway",
+      "furnitureId": "_room_hallway",
+      "label": "Walk through hallway",
+      "room": "hallway",
+      "duration": {
+        "min": 0.5,
+        "max": 1
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "walk",
+      "category": "transit",
+      "priority": 1,
+      "description": "Just passing through the hallway between rooms.",
+      "needsEffects": {
+        "energy": -1
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "grill_food",
+      "furnitureId": "grill",
+      "label": "Grill burgers & dogs",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 11,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "cooking",
+      "priority": 5,
+      "description": "Fire up the BBQ grill and cook burgers, hot dogs, or steaks.",
+      "needsEffects": {
+        "hunger": 5,
+        "fun": 8,
+        "social": 5,
+        "energy": -3
+      },
+      "skillEffects": {
+        "cooking": 0.2
+      }
+    },
+    {
+      "id": "grill_dinner",
+      "furnitureId": "grill",
+      "label": "Grill dinner",
+      "room": "backyard",
+      "duration": {
+        "min": 20,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 17,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "father"
+      ],
+      "animation": "use",
+      "category": "cooking",
+      "priority": 6,
+      "description": "Go all out on the grill — ribs, corn, the whole spread.",
+      "needsEffects": {
+        "hunger": 5,
+        "fun": 8,
+        "social": 5,
+        "energy": -5
+      },
+      "skillEffects": {
+        "cooking": 0.3
+      }
+    },
+    {
+      "id": "soak_hot_tub",
+      "furnitureId": "hot_tub",
+      "label": "Soak in hot tub",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": null,
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 5,
+      "description": "Climb into the jacuzzi and let the jets melt the stress away.",
+      "needsEffects": {
+        "comfort": 30,
+        "hygiene": 10,
+        "fun": 15,
+        "energy": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "hot_tub_evening",
+      "furnitureId": "hot_tub",
+      "label": "Evening soak in hot tub",
+      "room": "backyard",
+      "duration": {
+        "min": 20,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 19,
+        "end": 23
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 6,
+      "description": "Evening wind-down session in the jacuzzi under the stars.",
+      "needsEffects": {
+        "comfort": 35,
+        "hygiene": 10,
+        "fun": 15,
+        "energy": 10,
+        "social": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "eat_picnic_table",
+      "furnitureId": "picnic_table",
+      "label": "Eat at picnic table",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 25
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "eating",
+      "priority": 4,
+      "description": "Enjoy a meal outdoors at the picnic table.",
+      "needsEffects": {
+        "hunger": 35,
+        "hydration": 5,
+        "social": 10,
+        "fun": 8,
+        "comfort": 3,
+        "bladder": -10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "sit_picnic_table",
+      "furnitureId": "picnic_table",
+      "label": "Hang out at picnic table",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 20
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "social",
+      "priority": 3,
+      "description": "Sit at the picnic table and chat or enjoy the outdoors.",
+      "needsEffects": {
+        "social": 20,
+        "fun": 10,
+        "comfort": 3
+      },
+      "skillEffects": {
+        "charisma": 0.2
+      }
+    },
+    {
+      "id": "swim_in_pool",
+      "furnitureId": "swimming_pool",
+      "label": "Go swimming",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 60
+      },
+      "timeWindow": {
+        "start": 8,
+        "end": 20
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "exercise",
+      "priority": 7,
+      "description": "Jump in the pool and swim some laps or just splash around.",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 15,
+        "hygiene": -5
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "swim_laps",
+      "furnitureId": "swimming_pool",
+      "label": "Swim laps",
+      "room": "backyard",
+      "duration": {
+        "min": 20,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 10
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "exercise",
+      "priority": 4,
+      "description": "Early-morning lap swimming for exercise.",
+      "needsEffects": {
+        "energy": -20,
+        "fun": 10
+      },
+      "skillEffects": {
+        "fitness": 0.4
+      }
+    },
+    {
+      "id": "pool_cannonball",
+      "furnitureId": "pool_diving_board",
+      "label": "Cannonball off diving board",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 10,
+        "end": 19
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 6,
+      "description": "Run down the diving board and do a huge cannonball splash!",
+      "needsEffects": {
+        "fun": 25,
+        "energy": -5,
+        "social": 10
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "diving_board_dive",
+      "furnitureId": "pool_diving_board",
+      "label": "Practice dives",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 10,
+        "end": 19
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "exercise",
+      "priority": 3,
+      "description": "Practice belly flops — er, graceful dives — off the board.",
+      "needsEffects": {
+        "energy": -8,
+        "fun": 15
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "lounge_poolside_1",
+      "furnitureId": "pool_chair_1",
+      "label": "Lounge by the pool",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 9,
+        "end": 18
+      },
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 5,
+      "description": "Stretch out on the lounge chair and soak up some sun.",
+      "needsEffects": {
+        "comfort": 20,
+        "fun": 10,
+        "energy": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "lounge_poolside_2",
+      "furnitureId": "pool_chair_2",
+      "label": "Sunbathe by the pool",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 45
+      },
+      "timeWindow": {
+        "start": 9,
+        "end": 18
+      },
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 4,
+      "description": "Catch some rays on the second poolside lounge chair.",
+      "needsEffects": {
+        "comfort": 20,
+        "fun": 8,
+        "energy": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "play_swings",
+      "furnitureId": "swing_set",
+      "label": "Swing on the swings",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 6,
+      "description": "Pump those legs and swing high on the swing set!",
+      "needsEffects": {
+        "fun": 25,
+        "energy": -5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "push_kid_swing",
+      "furnitureId": "swing_set",
+      "label": "Push kid on swings",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "social",
+      "priority": 4,
+      "description": "Stand behind the swing set and push the kids higher!",
+      "needsEffects": {
+        "social": 25,
+        "fun": 10,
+        "energy": -5
+      },
+      "skillEffects": {
+        "charisma": 0.1
+      }
+    },
+    {
+      "id": "go_down_slide",
+      "furnitureId": "slide",
+      "label": "Go down the slide",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 5,
+      "description": "Climb up and slide down — again and again!",
+      "needsEffects": {
+        "fun": 20,
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "play_sandbox",
+      "furnitureId": "sandbox",
+      "label": "Build sandcastles",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 19
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 5,
+      "description": "Dig, scoop, and build sandcastles in the sandbox.",
+      "needsEffects": {
+        "fun": 25,
+        "energy": -3
+      },
+      "skillEffects": {
+        "creativity": 0.2
+      }
+    },
+    {
+      "id": "monkey_bars_play",
+      "furnitureId": "monkey_bars",
+      "label": "Climb the monkey bars",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "exercise",
+      "priority": 5,
+      "description": "Swing from bar to bar like a little monkey.",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 15
+      },
+      "skillEffects": {
+        "fitness": 0.3
+      }
+    },
+    {
+      "id": "jump_trampoline",
+      "furnitureId": "trampoline",
+      "label": "Jump on trampoline",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "exercise",
+      "priority": 7,
+      "description": "Bounce sky-high on the trampoline!",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 20
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "trampoline_adult",
+      "furnitureId": "trampoline",
+      "label": "Bounce on trampoline",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "exercise",
+      "priority": 2,
+      "description": "Adults can bounce too... carefully.",
+      "needsEffects": {
+        "energy": -12,
+        "fun": 15
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "kick_soccer_ball",
+      "furnitureId": "soccer_ball",
+      "label": "Kick soccer ball around",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "exercise",
+      "priority": 4,
+      "description": "Dribble and kick the soccer ball around the yard.",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 15,
+        "social": 5
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "shoot_hoops",
+      "furnitureId": "basketball",
+      "label": "Shoot hoops",
+      "room": "backyard",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "exercise",
+      "priority": 4,
+      "description": "Dribble the basketball and practice shots in the yard.",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 15
+      },
+      "skillEffects": {
+        "fitness": 0.2
+      }
+    },
+    {
+      "id": "toss_beach_ball",
+      "furnitureId": "beach_ball",
+      "label": "Play with beach ball",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 8,
+        "end": 19
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "entertainment",
+      "priority": 3,
+      "description": "Bop the beach ball around in the pool or yard.",
+      "needsEffects": {
+        "fun": 20,
+        "social": 10,
+        "energy": -3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "jump_rope_play",
+      "furnitureId": "jump_rope",
+      "label": "Jump rope",
+      "room": "backyard",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": [
+        "son",
+        "daughter"
+      ],
+      "animation": "use",
+      "category": "exercise",
+      "priority": 4,
+      "description": "Skip and jump rope in the backyard.",
+      "needsEffects": {
+        "energy": -12,
+        "fun": 15
+      },
+      "skillEffects": {
+        "fitness": 0.3
+      }
+    },
+    {
+      "id": "get_garden_tools",
+      "furnitureId": "garden_shed",
+      "label": "Get garden tools",
+      "room": "backyard",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 19
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Grab a rake, shovel, or garden hose from the shed.",
+      "needsEffects": {
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "do_yard_work",
+      "furnitureId": "garden_shed",
+      "label": "Do yard work",
+      "room": "backyard",
+      "duration": {
+        "min": 20,
+        "max": 60
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 18
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 4,
+      "description": "Pull weeds, rake leaves, trim hedges — general yard maintenance.",
+      "needsEffects": {
+        "energy": -10,
+        "fun": 3,
+        "hygiene": -8
+      },
+      "skillEffects": {
+        "gardening": 0.2
+      }
+    },
+    {
+      "id": "tend_garden",
+      "furnitureId": "garden_shed",
+      "label": "Tend the garden",
+      "room": "backyard",
+      "duration": {
+        "min": 15,
+        "max": 40
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 18
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "hobby",
+      "priority": 3,
+      "description": "Water plants, prune flowers, and check on the garden.",
+      "needsEffects": {
+        "fun": 15,
+        "energy": -8,
+        "hygiene": -5
+      },
+      "skillEffects": {
+        "gardening": 0.3
+      }
+    },
+    {
+      "id": "check_mail",
+      "furnitureId": "_exterior_mailbox",
+      "label": "Check the mailbox",
+      "room": "_exterior",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": {
+        "start": 10,
+        "end": 17
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "errand",
+      "priority": 3,
+      "description": "Walk out to the mailbox and grab the mail.",
+      "needsEffects": {
+        "energy": -2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "water_hedges",
+      "furnitureId": "_exterior_hedges",
+      "label": "Water the hedges",
+      "room": "_exterior",
+      "duration": {
+        "min": 5,
+        "max": 15
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 10
+      },
+      "eligibleRoles": [
+        "father",
+        "mother"
+      ],
+      "animation": "use",
+      "category": "chores",
+      "priority": 2,
+      "description": "Grab a hose and water the front hedges.",
+      "needsEffects": {
+        "energy": -5
+      },
+      "skillEffects": {
+        "gardening": 0.1
+      }
+    },
+    {
+      "id": "sit_on_porch",
+      "furnitureId": "_exterior_porch",
+      "label": "Sit on the porch",
+      "room": "_exterior",
+      "duration": {
+        "min": 10,
+        "max": 30
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 3,
+      "description": "Step outside and sit on the porch steps.",
+      "needsEffects": {
+        "comfort": 15,
+        "fun": 5,
+        "social": 3
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "watch_sunset_porch",
+      "furnitureId": "_exterior_porch",
+      "label": "Watch the sunset",
+      "room": "_exterior",
+      "duration": {
+        "min": 10,
+        "max": 20
+      },
+      "timeWindow": {
+        "start": 18,
+        "end": 21
+      },
+      "eligibleRoles": null,
+      "animation": "sit",
+      "category": "relaxing",
+      "priority": 4,
+      "description": "Sit on the porch and watch the sun go down.",
+      "needsEffects": {
+        "comfort": 20,
+        "fun": 15,
+        "social": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "wave_at_neighbors",
+      "furnitureId": "_exterior_porch",
+      "label": "Wave at neighbors",
+      "room": "_exterior",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": {
+        "start": 7,
+        "end": 20
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "social",
+      "priority": 2,
+      "description": "Stand on the porch and wave hello to a passing neighbor.",
+      "needsEffects": {
+        "social": 10,
+        "fun": 3
+      },
+      "skillEffects": {
+        "charisma": 0.1
+      }
+    },
+    {
+      "id": "turn_on_lights",
+      "furnitureId": "_room_any",
+      "label": "Turn on lights",
+      "room": "_any",
+      "duration": {
+        "min": 0.1,
+        "max": 0.2
+      },
+      "timeWindow": {
+        "start": 17,
+        "end": 6
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "routine",
+      "priority": 7,
+      "description": "Flip the light switch when entering a dark room at night.",
+      "needsEffects": {},
+      "skillEffects": {}
+    },
+    {
+      "id": "turn_off_lights",
+      "furnitureId": "_room_any",
+      "label": "Turn off lights",
+      "room": "_any",
+      "duration": {
+        "min": 0.1,
+        "max": 0.2
+      },
+      "timeWindow": {
+        "start": 6,
+        "end": 17
+      },
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "routine",
+      "priority": 3,
+      "description": "Turn off an unnecessary light during the day.",
+      "needsEffects": {},
+      "skillEffects": {}
+    },
+    {
+      "id": "turn_off_lights_leaving",
+      "furnitureId": "_room_any",
+      "label": "Turn off lights (leaving)",
+      "room": "_any",
+      "duration": {
+        "min": 0.1,
+        "max": 0.2
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "routine",
+      "priority": 2,
+      "description": "Flip the light switch off when leaving a room.",
+      "needsEffects": {},
+      "skillEffects": {}
+    }
+  ],
+  "needs": {
+    "energy": {
+      "label": "Energy",
+      "icon": "⚡",
+      "initial": 100,
+      "decayPerHour": 4.2,
+      "decayModifiers": {
+        "14-16": 1.5,
+        "02-05": 0.5
+      },
+      "description": "Physical and mental stamina. Depletes throughout the day, restored by sleeping. Decays faster in the afternoon slump (2-4 PM)."
+    },
+    "hunger": {
+      "label": "Hunger",
+      "icon": "🍔",
+      "initial": 80,
+      "decayPerHour": 12.5,
+      "decayModifiers": {
+        "07-08": 1.4,
+        "12-13": 1.4,
+        "18-19": 1.4
+      },
+      "description": "How full the character is. Decays steadily, faster around meal times. Restored by eating meals and snacks."
+    },
+    "hydration": {
+      "label": "Hydration",
+      "icon": "💧",
+      "initial": 90,
+      "decayPerHour": 8.3,
+      "decayModifiers": {},
+      "description": "How well-hydrated the character is. Decays steadily. Restored by drinking, eating meals, and being near water."
+    },
+    "hygiene": {
+      "label": "Hygiene",
+      "icon": "🧼",
+      "initial": 100,
+      "decayPerHour": 4.2,
+      "decayModifiers": {},
+      "description": "Cleanliness. Decays slowly over 24 hours. Restored by showering, bathing, brushing teeth, and washing hands."
+    },
+    "bladder": {
+      "label": "Bladder",
+      "icon": "🚽",
+      "initial": 90,
+      "decayPerHour": 14.3,
+      "decayModifiers": {},
+      "description": "Bathroom urgency. Decays fastest of all needs (~7 hour cycle). Fully restored by using the toilet."
+    },
+    "fun": {
+      "label": "Fun",
+      "icon": "🎮",
+      "initial": 75,
+      "decayPerHour": 10,
+      "decayModifiers": {},
+      "description": "Entertainment and joy. Decays moderately fast. Restored by playing, watching TV, reading, socializing, hobbies."
+    },
+    "social": {
+      "label": "Social",
+      "icon": "💬",
+      "initial": 70,
+      "decayPerHour": 6.25,
+      "decayModifiers": {
+        "08-17": 1.2
+      },
+      "description": "Need for companionship and conversation. Decays slowly. Restored by chatting, group activities, and being together."
+    },
+    "comfort": {
+      "label": "Comfort",
+      "icon": "🛋️",
+      "initial": 85,
+      "decayPerHour": 5.6,
+      "decayModifiers": {},
+      "description": "Physical comfort level. Decays slowly. Restored by sitting, relaxing, sleeping, and soaking in the hot tub."
+    }
+  },
+  "skills": {
+    "cooking": {
+      "label": "Cooking",
+      "icon": "👨‍🍳",
+      "initial": 0,
+      "max": 10,
+      "description": "Proficiency in preparing food. Higher levels mean faster cooking and better-quality meals."
+    },
+    "handiness": {
+      "label": "Handiness",
+      "icon": "🔧",
+      "initial": 0,
+      "max": 10,
+      "description": "Ability to fix, build, and maintain things around the house and garage."
+    },
+    "fitness": {
+      "label": "Fitness",
+      "icon": "💪",
+      "initial": 0,
+      "max": 10,
+      "description": "Physical conditioning. Higher levels reduce energy cost of exercise and improve athletic performance."
+    },
+    "creativity": {
+      "label": "Creativity",
+      "icon": "🎨",
+      "initial": 0,
+      "max": 10,
+      "description": "Artistic and imaginative ability. Improves through drawing, crafts, and creative play."
+    },
+    "logic": {
+      "label": "Logic",
+      "icon": "🧩",
+      "initial": 0,
+      "max": 10,
+      "description": "Analytical and problem-solving skills. Improves through studying, reading, and homework."
+    },
+    "charisma": {
+      "label": "Charisma",
+      "icon": "✨",
+      "initial": 0,
+      "max": 10,
+      "description": "Social grace and communication skill. Improves through conversation and group activities."
+    },
+    "gardening": {
+      "label": "Gardening",
+      "icon": "🌱",
+      "initial": 0,
+      "max": 10,
+      "description": "Green thumb. Improves through tending the garden, yard work, and watering plants."
+    }
+  },
+  "relationships": {
+    "_schema": {
+      "description": "Relationship values between each pair of family members. Range -100 (enemies) to +100 (best friends). Positive social interactions boost the relationship between the two characters present. Tracked as a symmetric matrix keyed by 'memberA:memberB'.",
+      "range": [
+        -100,
+        100
+      ],
+      "decayPerHour": 0.1,
+      "boostOnSameRoom": 0.2,
+      "boostOnSocialInteraction": 5
+    },
+    "defaults": {
+      "Dad:Mom": 80,
+      "Dad:Emma": 70,
+      "Dad:Lily": 70,
+      "Dad:Jack": 75,
+      "Mom:Emma": 75,
+      "Mom:Lily": 75,
+      "Mom:Jack": 70,
+      "Emma:Lily": 60,
+      "Emma:Jack": 50,
+      "Lily:Jack": 50
+    }
+  },
+  "inventory": {
+    "_schema": {
+      "description": "Each character has an inventory — a list of item objects they are carrying or have access to. Items may be gained through interactions (e.g. picking up garden tools) and consumed or dropped when done.",
+      "maxSlots": 8,
+      "itemFormat": {
+        "id": "Unique item identifier (e.g. 'garden_shears')",
+        "label": "Display name",
+        "icon": "Emoji icon",
+        "category": "tool | food | book | clothing | toy | misc",
+        "consumable": "boolean — removed from inventory after use"
+      }
+    },
+    "items": {
+      "garden_shears": {
+        "label": "Garden Shears",
+        "icon": "✂️",
+        "category": "tool",
+        "consumable": false
+      },
+      "watering_can": {
+        "label": "Watering Can",
+        "icon": "🚿",
+        "category": "tool",
+        "consumable": false
+      },
+      "cleaning_spray": {
+        "label": "Cleaning Spray",
+        "icon": "🧴",
+        "category": "tool",
+        "consumable": true
+      },
+      "book": {
+        "label": "Book",
+        "icon": "📖",
+        "category": "book",
+        "consumable": false
+      },
+      "snack": {
+        "label": "Snack",
+        "icon": "🍪",
+        "category": "food",
+        "consumable": true
+      },
+      "cold_drink": {
+        "label": "Cold Drink",
+        "icon": "🥤",
+        "category": "food",
+        "consumable": true
+      },
+      "soccer_ball": {
+        "label": "Soccer Ball",
+        "icon": "⚽",
+        "category": "toy",
+        "consumable": false
+      },
+      "basketball": {
+        "label": "Basketball",
+        "icon": "🏀",
+        "category": "toy",
+        "consumable": false
+      },
+      "beach_ball": {
+        "label": "Beach Ball",
+        "icon": "🏖️",
+        "category": "toy",
+        "consumable": false
+      },
+      "jump_rope": {
+        "label": "Jump Rope",
+        "icon": "🪢",
+        "category": "toy",
+        "consumable": false
+      },
+      "costume": {
+        "label": "Costume",
+        "icon": "🎭",
+        "category": "clothing",
+        "consumable": false
+      },
+      "mail": {
+        "label": "Mail",
+        "icon": "📬",
+        "category": "misc",
+        "consumable": true
+      },
+      "plate_of_food": {
+        "label": "Plate of Food",
+        "icon": "🍽️",
+        "category": "food",
+        "consumable": true
+      },
+      "wrench": {
+        "label": "Wrench",
+        "icon": "🔧",
+        "category": "tool",
+        "consumable": false
+      },
+      "paint_brush": {
+        "label": "Paint Brush",
+        "icon": "🖌️",
+        "category": "tool",
+        "consumable": false
+      }
+    }
+  }
+}

@@ -2,12 +2,20 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Stats, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
+import { io } from 'socket.io-client';
 import House3D from './components/House3D';
 import CharacterSprite from './components/CharacterSprite';
 import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
-import { createFamily, updateFamilyMember, commandFamilyMember } from './game/FamilyMemberAI';
 import { HOUSE_LAYOUT } from './game/HouseLayout';
+
+/* ════════════════════════════════════════════════════════════════
+ *  SOCKET.IO CONNECTION — single shared instance
+ * ════════════════════════════════════════════════════════════════ */
+const socket = io({ transports: ['websocket', 'polling'] });
+socket.on('connect', () => console.log('[Socket] Connected:', socket.id));
+socket.on('connect_error', (e) => console.error('[Socket] Error:', e.message));
+socket.on('disconnect', (reason) => console.log('[Socket] Disconnected:', reason));
 
 /* ════════════════════════════════════════════════════════════════
  *  TIME / SKY HELPERS
@@ -60,52 +68,16 @@ function sampleKeyframes(kf, hour) {
  *  visual sun / moon spheres, and keeps the game clock ticking.
  * ════════════════════════════════════════════════════════════════ */
 
-function SunSystem({ timeSpeed, syncToReal, paused, onTimeUpdate, timeOverrideRef }) {
+function SunSystem({ gameTime }) {
   const sunRef = useRef();
   const ambientRef = useRef();
   const sunSphereRef = useRef();
   const moonSphereRef = useRef();
   const { scene } = useThree();
-  const gameTimeRef = useRef(getEasternTime());
-  const lastDisplayRef = useRef(0);
 
-  // When syncToReal flips on, snap immediately
-  useEffect(() => {
-    if (syncToReal) gameTimeRef.current = getEasternTime();
-  }, [syncToReal]);
-
-  useFrame((_, delta) => {
-    /* ── Advance clock ───────────────────────────────── */
-    if (!paused) {
-      if (syncToReal) {
-        gameTimeRef.current = getEasternTime();
-      } else {
-        const clampedDelta = Math.min(delta, 0.1);
-        gameTimeRef.current = new Date(
-          gameTimeRef.current.getTime() + clampedDelta * 1000 * timeSpeed
-        );
-      }
-    }
-
-    // Honour slider override
-    if (timeOverrideRef?.current !== null && timeOverrideRef?.current !== undefined) {
-      const h = Math.floor(timeOverrideRef.current);
-      const m = Math.floor((timeOverrideRef.current - h) * 60);
-      const d = new Date(gameTimeRef.current);
-      d.setHours(h, m, 0, 0);
-      gameTimeRef.current = d;
-      timeOverrideRef.current = null;
-    }
-
-    // Throttled HUD update (~4 fps)
-    const now = performance.now();
-    if (now - lastDisplayRef.current > 250) {
-      lastDisplayRef.current = now;
-      if (onTimeUpdate) onTimeUpdate(new Date(gameTimeRef.current));
-    }
-
-    /* ── Sun maths ───────────────────────────────────── */
-    const t = gameTimeRef.current;
+  useFrame(() => {
+    /* ── Sun maths — driven by server-authoritative gameTime ── */
+    const t = gameTime;
     const hour = t.getHours() + t.getMinutes() / 60 + t.getSeconds() / 3600;
 
     const SUNRISE = 6, SUNSET = 18;
@@ -226,60 +198,20 @@ function CompassIndicators() {
 
 /**
  * GameScene - Main 3D scene containing the house and characters.
- * Exposes live family state so the sidebar can track the selected player.
+ * PASSIVE RENDERER: receives family state from the server via props.
+ * No local AI logic — the server is the source of truth.
  */
-function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, timeSpeed, syncToReal, simPaused, onTimeUpdate, timeOverrideRef, roomLights, gameTime, firstPerson, commandRef }) {
-  const [family, setFamily] = useState(() => createFamily());
-  const familyRef = useRef(family);
-  const gameTimeRef = useRef(gameTime);
-
-  // Keep refs in sync
-  useEffect(() => { familyRef.current = family; }, [family]);
-  useEffect(() => { gameTimeRef.current = gameTime; }, [gameTime]);
+function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, roomLights, gameTime, firstPerson, family }) {
 
   // Notify parent of family updates so sidebar can live-track selected player
   useEffect(() => {
     if (onFamilyUpdate) onFamilyUpdate(family);
   }, [family, onFamilyUpdate]);
 
-  // Process pending player command (from SidePane action buttons)
-  useFrame(() => {
-    if (commandRef?.current) {
-      const { memberName, interactionId } = commandRef.current;
-      commandRef.current = null;
-      setFamily(prev =>
-        prev.map(m =>
-          m.name === memberName ? commandFamilyMember(m, interactionId) : m
-        )
-      );
-    }
-  });
-
-  // Game loop: update AI every frame (speed = timeSpeed, clamped for sanity)
-  useFrame((state, delta) => {
-    if (simPaused) return;
-    const effectiveSpeed = syncToReal ? 1 : timeSpeed;
-    const dt = Math.min(delta, 0.1) * effectiveSpeed;
-
-    // Compute current game hour for interaction time-window checks
-    const gt = gameTimeRef.current;
-    const gameHour = gt ? (gt.getHours() + gt.getMinutes() / 60) : 12;
-
-    setFamily(prev =>
-      prev.map(member => updateFamilyMember(member, dt, gameHour))
-    );
-  });
-
   return (
     <>
-      {/* Sun / Moon / Ambient – driven by game clock */}
-      <SunSystem
-        timeSpeed={timeSpeed}
-        syncToReal={syncToReal}
-        paused={simPaused}
-        onTimeUpdate={onTimeUpdate}
-        timeOverrideRef={timeOverrideRef}
-      />
+      {/* Sun / Moon / Ambient – driven by server game clock */}
+      <SunSystem gameTime={gameTime} />
 
       {/* Compass indicators */}
       <CompassIndicators />
@@ -423,50 +355,48 @@ export default function App() {
     setPanelVis(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  // Simulation / time-of-day state
+  // Simulation / time-of-day state — driven by server via Socket.IO
   const [simPaused, setSimPaused] = useState(false);
-  const [timeSpeed, setTimeSpeed] = useState(1);          // 1x, 10x, 100x, 1000x
-  const [syncToReal, setSyncToReal] = useState(false);     // lock to Eastern Time
+  const [timeSpeed, setTimeSpeed] = useState(1);
+  const [syncToReal, setSyncToReal] = useState(false);
   const [gameTime, setGameTime] = useState(() => getEasternTime());
-  const timeOverrideRef = useRef(null);                    // slider → SunSystem
   const TIME_SPEEDS = [1, 10, 100, 1000];
 
-  // Room lights state: { room_id: boolean }
+  // Family state — received from server
+  const [family, setFamily] = useState([]);
+
+  // Room lights state — driven by server
   const [roomLights, setRoomLights] = useState(() => {
     const initial = {};
     HOUSE_LAYOUT.rooms.forEach(r => { initial[r.id] = true; });
     initial._exterior = true;
     return initial;
   });
-  const [lightsAuto, setLightsAuto] = useState(true);  // auto-on at dusk
+  const [lightsAuto, setLightsAuto] = useState(true);
 
-  // Auto-on/off based on time of day
+  // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
-    if (!lightsAuto || !gameTime) return;
-    const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
-    const shouldBeOn = hour >= 18 || hour < 6.5;
-    setRoomLights(prev => {
-      const next = { ...prev };
-      let changed = false;
-      for (const key of Object.keys(next)) {
-        if (next[key] !== shouldBeOn) { next[key] = shouldBeOn; changed = true; }
-      }
-      return changed ? next : prev;
-    });
-  }, [lightsAuto, gameTime]);
+    function onGameState(state) {
+      console.log('[Socket] gameState received, family count:', state.family?.length);
+      if (state.family) setFamily(state.family);
+      if (state.gameTime) setGameTime(new Date(state.gameTime));
+      if (state.gameSpeed !== undefined) setTimeSpeed(state.gameSpeed);
+      if (state.paused !== undefined) setSimPaused(state.paused);
+      if (state.syncToReal !== undefined) setSyncToReal(state.syncToReal);
+      if (state.roomLights) setRoomLights(state.roomLights);
+      if (state.lightsAuto !== undefined) setLightsAuto(state.lightsAuto);
+    }
+    socket.on('gameState', onGameState);
+    return () => { socket.off('gameState', onGameState); };
+  }, []);
 
+  // ── Controls: emit commands to server instead of local state ──
   const toggleRoomLight = useCallback((roomId) => {
-    setRoomLights(prev => ({ ...prev, [roomId]: !prev[roomId] }));
-    setLightsAuto(false);  // manual override disables auto
+    socket.emit('toggleRoomLight', roomId);
   }, []);
 
   const setAllLights = useCallback((on) => {
-    setRoomLights(prev => {
-      const next = {};
-      Object.keys(prev).forEach(k => { next[k] = on; });
-      return next;
-    });
-    setLightsAuto(false);
+    socket.emit('setAllLights', on);
   }, []);
 
   const toggleVisibility = useCallback((key) => {
@@ -475,7 +405,6 @@ export default function App() {
   const [selectedPlayerName, setSelectedPlayerName] = useState(null);
   const [cameraFollowTarget, setCameraFollowTarget] = useState(null);
   const familyRef = useRef([]);
-  const commandRef = useRef(null);  // { memberName, interactionId } — consumed by GameScene
 
   const handleRoomHover = useCallback((room) => {
     setHoveredRoom(room);
@@ -616,15 +545,10 @@ export default function App() {
           selectedPlayerName={selectedPlayerName}
           onFamilyUpdate={handleFamilyUpdate}
           visibility={visibility}
-          timeSpeed={timeSpeed}
-          syncToReal={syncToReal}
-          simPaused={simPaused}
-          onTimeUpdate={setGameTime}
-          timeOverrideRef={timeOverrideRef}
           roomLights={roomLights}
           gameTime={gameTime}
           firstPerson={firstPerson}
-          commandRef={commandRef}
+          family={family}
         />
         {firstPerson ? (
           <FirstPersonController
@@ -667,10 +591,10 @@ export default function App() {
           timeSpeed={timeSpeed}
           syncToReal={syncToReal}
           paused={simPaused}
-          onSetTimeSpeed={(s) => { setTimeSpeed(s); setSyncToReal(false); }}
-          onToggleSyncReal={() => setSyncToReal(p => !p)}
-          onSetHour={(h) => { timeOverrideRef.current = h; setSyncToReal(false); }}
-          onTogglePaused={() => setSimPaused(p => !p)}
+          onSetTimeSpeed={(s) => { socket.emit('setSpeed', s); }}
+          onToggleSyncReal={() => { socket.emit('setSyncToReal', !syncToReal); }}
+          onSetHour={(h) => { socket.emit('setTimeOverride', h); }}
+          onTogglePaused={() => { socket.emit('togglePause'); }}
         />
       )}
 
@@ -682,7 +606,7 @@ export default function App() {
           onAllOn={() => setAllLights(true)}
           onAllOff={() => setAllLights(false)}
           lightsAuto={lightsAuto}
-          onToggleAuto={() => setLightsAuto(p => !p)}
+          onToggleAuto={() => { socket.emit('toggleLightsAuto'); }}
         />
       )}
 
@@ -708,7 +632,7 @@ export default function App() {
           data={sidePaneData}
           onClose={handleCloseSidePane}
           onCommandAction={(memberName, interactionId) => {
-            commandRef.current = { memberName, interactionId };
+            socket.emit('command', { memberName, interactionId });
           }}
         />
       )}
