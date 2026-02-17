@@ -107,13 +107,13 @@ class GameSimulation {
 
     const gameHour = this.gameTime.getHours() + this.gameTime.getMinutes() / 60;
 
+    // ── Agentic reasoning FIRST — intercepts CHOOSING before regular AI picks randomly ──
+    this._tickAgentic();
+
     // ── Update each family member ──
     this.family = this.family.map(member =>
       updateFamilyMember(member, dt, gameHour)
     );
-
-    // ── Agentic reasoning (async LLM decisions) ──
-    this._tickAgentic();
 
     // ── Auto lights (dusk/dawn) ──
     if (this.lightsAuto) {
@@ -277,100 +277,74 @@ class GameSimulation {
 
   /**
    * Called every tick to manage agentic reasoning.
-   * Detects characters in CHOOSING state, transitions them to THINKING,
-   * and resolves pending LLM decisions.
+   * Runs BEFORE updateFamilyMember so it can intercept CHOOSING → THINKING
+   * before the regular AI picks a random interaction.
+   *
+   * Flow:
+   *  1. CHOOSING members with agentic enabled → start LLM reasoning → THINKING
+   *  2. THINKING members with resolved promise → apply decision → command
+   *  3. THINKING members with timed-out promise → fallback → CHOOSING
    */
   _tickAgentic() {
-    // Let the engine evaluate who needs reasoning
+    // Get decisions/fallbacks from the engine tick
     const results = this.agenticEngine.tick(
       this.family, this.gameTime, this.gameSpeed, this.roomLights
     );
 
-    // Process immediate fallback decisions
-    for (const { memberName, decision, fallback } of results) {
+    // Process immediate fallback decisions (high speed, engine disabled, etc.)
+    for (const { memberName, fallback } of results) {
       if (fallback) {
-        // Let the regular AI handle it — just ensure state is CHOOSING
         const idx = this.family.findIndex(m => m.name === memberName);
         if (idx >= 0 && this.family[idx].state === 'thinking') {
-          this.family[idx] = { ...this.family[idx], state: 'choosing' };
+          // Return to CHOOSING so the regular AI can pick
+          this.family[idx] = { ...this.family[idx], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
         }
+        // If still in CHOOSING, just leave it — regular AI will handle
       }
     }
 
-    // Transition CHOOSING → THINKING for members the engine is reasoning for
-    for (const member of this.family) {
+    // Transition CHOOSING → THINKING for members the engine is now reasoning for
+    for (let i = 0; i < this.family.length; i++) {
+      const member = this.family[i];
       if (member.state === 'choosing' && this.agenticEngine.hasPendingDecision(member.name)) {
-        const idx = this.family.findIndex(m => m.name === member.name);
-        if (idx >= 0) {
-          this.family[idx] = {
-            ...this.family[idx],
-            state: 'thinking',
-            activityLabel: '💭 Thinking...',
-            activityAnim: null,
-            _thinkingRealStart: Date.now(),
-          };
-        }
+        this.family[i] = {
+          ...member,
+          state: 'thinking',
+          activityLabel: '💭 Thinking...',
+          activityAnim: null,
+          _thinkingRealStart: Date.now(),
+        };
       }
     }
 
-    // Check for resolved decisions
-    for (const member of this.family) {
+    // Check THINKING members for resolved or timed-out promises
+    for (let i = 0; i < this.family.length; i++) {
+      const member = this.family[i];
       if (member.state !== 'thinking') continue;
 
-      const pending = this.agenticEngine.getPendingDecision(member.name);
-      if (!pending) {
-        // Decision has resolved — check what we got
-        const personaState = this.agenticEngine.getPersonaState(member.name);
-        const lastDecision = personaState?.lastDecision;
+      if (this.agenticEngine.hasPendingDecision(member.name)) {
+        // Still pending — nothing to do (timeout handled by AgenticEngine.tick)
+        continue;
+      }
 
-        if (lastDecision && Date.now() - lastDecision.timestamp < 2000) {
-          // Apply the LLM decision via the command system
-          this.agenticEngine.applyDecision(
-            member.name, { action: lastDecision.interactionId, thought: lastDecision.reason, ...personaState },
-            this.family, this.roomLights
-          );
+      // Promise has resolved (stored in resolvedDecisions map)
+      const resolved = this.agenticEngine.getResolvedDecision(member.name);
 
-          const idx = this.family.findIndex(m => m.name === member.name);
-          if (idx >= 0) {
-            this.family[idx] = commandFamilyMember(this.family[idx], lastDecision.interactionId);
-          }
-        } else {
-          // No decision came back — fallback to CHOOSING
-          const idx = this.family.findIndex(m => m.name === member.name);
-          if (idx >= 0) {
-            this.family[idx] = { ...this.family[idx], state: 'choosing' };
-          }
-        }
+      if (resolved === undefined) {
+        // Neither pending nor resolved yet — promise microtask hasn't run.
+        // Stay in THINKING, will resolve next tick.
+        continue;
+      }
+
+      if (resolved && resolved.valid) {
+        // Apply via the agentic engine (speech, memory, lights, etc.)
+        this.agenticEngine.applyDecision(member.name, resolved, this.family, this.roomLights);
+        // Command the family member to perform the chosen interaction
+        this.family[i] = commandFamilyMember(this.family[i], resolved.action);
       } else {
-        // Still pending — attach the resolution handler if not already done
-        if (!member._decisionHandlerAttached) {
-          const memberName = member.name;
-          pending.then(decision => {
-            if (decision && decision.valid) {
-              // Apply the decision
-              this.agenticEngine.applyDecision(
-                memberName, decision, this.family, this.roomLights
-              );
-
-              const idx = this.family.findIndex(m => m.name === memberName);
-              if (idx >= 0 && this.family[idx].state === 'thinking') {
-                this.family[idx] = commandFamilyMember(this.family[idx], decision.action);
-              }
-            } else {
-              // Invalid or null — fallback to random CHOOSING
-              const idx = this.family.findIndex(m => m.name === memberName);
-              if (idx >= 0 && this.family[idx].state === 'thinking') {
-                this.family[idx] = { ...this.family[idx], state: 'choosing' };
-              }
-            }
-          });
-
-          // Mark that we attached the handler (using mutable state, since _tickAgentic owns this)
-          const idx = this.family.findIndex(m => m.name === member.name);
-          if (idx >= 0) {
-            this.family[idx]._decisionHandlerAttached = true;
-          }
-        }
+        // No valid decision — return to CHOOSING for regular AI fallback
+        this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
+        this.agenticEngine.stats.fallbackDecisions++;
       }
     }
   }

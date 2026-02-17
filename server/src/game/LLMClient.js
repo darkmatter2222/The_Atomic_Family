@@ -148,6 +148,10 @@ class LLMClient {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
+          if (res.statusCode >= 400) {
+            reject(new Error(`HTTP ${res.statusCode}: ${data.substring(0, 200)}`));
+            return;
+          }
           try { resolve(JSON.parse(data)); }
           catch { reject(new Error(`Invalid JSON response: ${data.substring(0, 200)}`)); }
         });

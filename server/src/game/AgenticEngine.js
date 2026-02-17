@@ -51,6 +51,9 @@ class AgenticEngine {
     // Track pending reasoning requests
     this.pendingDecisions = new Map(); // memberName → { promise, startTime }
 
+    // Resolved decisions waiting to be picked up by GameSimulation
+    this.resolvedDecisions = new Map(); // memberName → decision (or null)
+
     // Track last reasoning time per character
     this.lastReasoningTime = {};       // memberName → Date.now()
 
@@ -109,6 +112,11 @@ class AgenticEngine {
    * @returns {Array<object>} - Decisions to apply [{ memberName, decision }]
    */
   tick(family, gameTime, gameSpeed, roomLights) {
+    // Periodic health check (non-blocking)
+    if (this.enabled && Date.now() - this.llmClient.lastHealthCheck > this.llmClient.healthCheckInterval) {
+      this.llmClient.checkHealth().catch(() => {});
+    }
+
     // Update moods for all characters
     for (const member of family) {
       if (this.personaStates[member.name]) {
@@ -154,8 +162,8 @@ class AgenticEngine {
         const timeSinceLast = Date.now() - (this.lastReasoningTime[member.name] || 0);
         if (timeSinceLast < MIN_REASONING_INTERVAL_MS) continue;
 
-        // At high speed, skip LLM and use fallback
-        if (gameSpeed > MAX_GAME_SPEED_FOR_LLM || !this.enabled) {
+        // At high speed, LLM disabled, or LLM unavailable — skip and use fallback
+        if (gameSpeed > MAX_GAME_SPEED_FOR_LLM || !this.enabled || this.llmClient.available === false) {
           decisionsToApply.push({ memberName: member.name, decision: null, fallback: true });
           continue;
         }
@@ -290,8 +298,11 @@ class AgenticEngine {
       console.error(`[AgenticEngine] LLM error for ${name}: ${err.message}`);
       this.stats.llmErrors++;
       return null;
-    }).finally(() => {
+    }).then(decision => {
+      // Store the resolved decision for GameSimulation to pick up
+      this.resolvedDecisions.set(name, decision);
       this.pendingDecisions.delete(name);
+      return decision;
     });
 
     this.pendingDecisions.set(name, { promise, startTime });
@@ -310,6 +321,17 @@ class AgenticEngine {
    */
   hasPendingDecision(memberName) {
     return this.pendingDecisions.has(memberName);
+  }
+
+  /**
+   * Get and consume a resolved decision for a member.
+   * Returns the decision object (or null) and removes it from the map.
+   */
+  getResolvedDecision(memberName) {
+    if (!this.resolvedDecisions.has(memberName)) return undefined;
+    const decision = this.resolvedDecisions.get(memberName);
+    this.resolvedDecisions.delete(memberName);
+    return decision;
   }
 
   /**
