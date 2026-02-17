@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Stats, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
@@ -13,9 +13,6 @@ import { HOUSE_LAYOUT } from './game/HouseLayout';
  *  SOCKET.IO CONNECTION — single shared instance
  * ════════════════════════════════════════════════════════════════ */
 const socket = io({ transports: ['websocket', 'polling'] });
-socket.on('connect', () => console.log('[Socket] Connected:', socket.id));
-socket.on('connect_error', (e) => console.error('[Socket] Error:', e.message));
-socket.on('disconnect', (reason) => console.log('[Socket] Disconnected:', reason));
 
 /* ════════════════════════════════════════════════════════════════
  *  TIME / SKY HELPERS
@@ -359,6 +356,7 @@ export default function App() {
   const [simPaused, setSimPaused] = useState(false);
   const [timeSpeed, setTimeSpeed] = useState(1);
   const [syncToReal, setSyncToReal] = useState(false);
+  const syncToRealRef = useRef(false);
   const [gameTime, setGameTime] = useState(() => getEasternTime());
   const TIME_SPEEDS = [1, 10, 100, 1000];
 
@@ -377,12 +375,11 @@ export default function App() {
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
     function onGameState(state) {
-      console.log('[Socket] gameState received, family count:', state.family?.length);
       if (state.family) setFamily(state.family);
       if (state.gameTime) setGameTime(new Date(state.gameTime));
       if (state.gameSpeed !== undefined) setTimeSpeed(state.gameSpeed);
       if (state.paused !== undefined) setSimPaused(state.paused);
-      if (state.syncToReal !== undefined) setSyncToReal(state.syncToReal);
+      if (state.syncToReal !== undefined) { setSyncToReal(state.syncToReal); syncToRealRef.current = state.syncToReal; }
       if (state.roomLights) setRoomLights(state.roomLights);
       if (state.lightsAuto !== undefined) setLightsAuto(state.lightsAuto);
     }
@@ -406,6 +403,30 @@ export default function App() {
   const [cameraFollowTarget, setCameraFollowTarget] = useState(null);
   const familyRef = useRef([]);
 
+  // ── Auto-cycle camera (rotate between family members) ──
+  const AUTO_CYCLE_INTERVALS = useMemo(() => [5, 10, 30, 60], []);
+  const [autoCycleEnabled, setAutoCycleEnabled] = useState(false);
+  const [autoCycleInterval, setAutoCycleInterval] = useState(10);
+  const autoCycleIndexRef = useRef(0);
+
+  useEffect(() => {
+    if (!autoCycleEnabled || family.length === 0) return;
+    // Immediately focus the first person when enabled
+    const pickNext = () => {
+      const idx = autoCycleIndexRef.current % family.length;
+      const member = family[idx];
+      if (member) {
+        setSelectedPlayerName(member.name);
+        setSidePaneData({ type: 'player', payload: { ...member } });
+        setCameraFollowTarget({ x: member.position.x, z: member.position.z });
+      }
+      autoCycleIndexRef.current = (idx + 1) % family.length;
+    };
+    pickNext();
+    const id = setInterval(pickNext, autoCycleInterval * 1000);
+    return () => clearInterval(id);
+  }, [autoCycleEnabled, autoCycleInterval, family.length]);
+
   const handleRoomHover = useCallback((room) => {
     setHoveredRoom(room);
   }, []);
@@ -415,6 +436,7 @@ export default function App() {
   }, []);
 
   const handlePlayerClick = useCallback((member) => {
+    setAutoCycleEnabled(false);          // manual click disables auto-cycle
     setSelectedPlayerName(member.name);
     setSidePaneData({ type: 'player', payload: { ...member } });
     setCameraFollowTarget({ x: member.position.x, z: member.position.z });
@@ -429,6 +451,7 @@ export default function App() {
   const [recenterCounter, setRecenterCounter] = useState(0);
 
   const handleGroundClick = useCallback(() => {
+    setAutoCycleEnabled(false);            // ground click disables auto-cycle
     setSelectedPlayerName(null);
     setCameraFollowTarget(null);
     setSidePaneData(null);
@@ -460,6 +483,23 @@ export default function App() {
       }
     }
   }, [selectedPlayerName, firstPerson]);
+
+  // ── Stable callbacks for memoized panels ──
+  const handleSetTimeSpeed = useCallback((s) => { socket.emit('setSpeed', s); }, []);
+  const handleToggleSyncReal = useCallback(() => { socket.emit('setSyncToReal', !syncToRealRef.current); }, []);
+  const handleSetHour = useCallback((h) => { socket.emit('setTimeOverride', h); }, []);
+  const handleTogglePaused = useCallback(() => { socket.emit('togglePause'); }, []);
+  const handleAllLightsOn = useCallback(() => setAllLights(true), [setAllLights]);
+  const handleAllLightsOff = useCallback(() => setAllLights(false), [setAllLights]);
+  const handleToggleLightsAuto = useCallback(() => { socket.emit('toggleLightsAuto'); }, []);
+  const handleToggleAutoRotate = useCallback(() => setCameraAutoRotate(p => !p), []);
+  const handleToggleTopDown = useCallback(() => { setCameraTopDown(p => !p); setFirstPerson(false); }, []);
+  const handleToggleLockOrientation = useCallback(() => setCameraLockOrientation(p => !p), []);
+  const handleToggleFirstPerson = useCallback(() => { setFirstPerson(p => !p); setCameraTopDown(false); setAutoCycleEnabled(false); }, []);
+  const handleToggleAutoCycle = useCallback(() => setAutoCycleEnabled(p => !p), []);
+  const handleCommandAction = useCallback((memberName, interactionId) => {
+    socket.emit('command', { memberName, interactionId });
+  }, []);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -591,10 +631,10 @@ export default function App() {
           timeSpeed={timeSpeed}
           syncToReal={syncToReal}
           paused={simPaused}
-          onSetTimeSpeed={(s) => { socket.emit('setSpeed', s); }}
-          onToggleSyncReal={() => { socket.emit('setSyncToReal', !syncToReal); }}
-          onSetHour={(h) => { socket.emit('setTimeOverride', h); }}
-          onTogglePaused={() => { socket.emit('togglePause'); }}
+          onSetTimeSpeed={handleSetTimeSpeed}
+          onToggleSyncReal={handleToggleSyncReal}
+          onSetHour={handleSetHour}
+          onTogglePaused={handleTogglePaused}
         />
       )}
 
@@ -603,10 +643,10 @@ export default function App() {
         <LightSwitchPanel
           roomLights={roomLights}
           onToggle={toggleRoomLight}
-          onAllOn={() => setAllLights(true)}
-          onAllOff={() => setAllLights(false)}
+          onAllOn={handleAllLightsOn}
+          onAllOff={handleAllLightsOff}
           lightsAuto={lightsAuto}
-          onToggleAuto={() => { socket.emit('toggleLightsAuto'); }}
+          onToggleAuto={handleToggleLightsAuto}
         />
       )}
 
@@ -616,13 +656,18 @@ export default function App() {
           visibility={visibility}
           onToggleVisibility={toggleVisibility}
           cameraAutoRotate={cameraAutoRotate}
-          onToggleAutoRotate={() => setCameraAutoRotate(p => !p)}
+          onToggleAutoRotate={handleToggleAutoRotate}
           cameraTopDown={cameraTopDown}
-          onToggleTopDown={() => { setCameraTopDown(p => !p); setFirstPerson(false); }}
+          onToggleTopDown={handleToggleTopDown}
           cameraLockOrientation={cameraLockOrientation}
-          onToggleLockOrientation={() => setCameraLockOrientation(p => !p)}
+          onToggleLockOrientation={handleToggleLockOrientation}
           firstPerson={firstPerson}
-          onToggleFirstPerson={() => { setFirstPerson(p => !p); setCameraTopDown(false); }}
+          onToggleFirstPerson={handleToggleFirstPerson}
+          autoCycleEnabled={autoCycleEnabled}
+          onToggleAutoCycle={handleToggleAutoCycle}
+          autoCycleInterval={autoCycleInterval}
+          autoCycleIntervals={AUTO_CYCLE_INTERVALS}
+          onSetAutoCycleInterval={setAutoCycleInterval}
         />
       )}
 
@@ -631,9 +676,7 @@ export default function App() {
         <SidePane
           data={sidePaneData}
           onClose={handleCloseSidePane}
-          onCommandAction={(memberName, interactionId) => {
-            socket.emit('command', { memberName, interactionId });
-          }}
+          onCommandAction={handleCommandAction}
         />
       )}
     </div>
@@ -854,7 +897,7 @@ const ROOM_LIGHT_LABELS = [
   { id: '_exterior', label: 'Exterior', icon: '\uD83C\uDFE0' },
 ];
 
-function LightSwitchPanel({ roomLights, onToggle, onAllOn, onAllOff, lightsAuto, onToggleAuto }) {
+const LightSwitchPanel = React.memo(function LightSwitchPanel({ roomLights, onToggle, onAllOn, onAllOff, lightsAuto, onToggleAuto }) {
   const allOn = Object.values(roomLights).every(Boolean);
   const allOff = Object.values(roomLights).every(v => !v);
 
@@ -913,7 +956,7 @@ function LightSwitchPanel({ roomLights, onToggle, onAllOn, onAllOff, lightsAuto,
       })}
     </div>
   );
-}
+});
 
 const lightMasterBtnStyle = (active) => ({
   flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
@@ -923,12 +966,14 @@ const lightMasterBtnStyle = (active) => ({
   color: active ? '#FFD700' : '#888', transition: 'all 0.15s ease',
 });
 
-function ControlsPanel({
+const ControlsPanel = React.memo(function ControlsPanel({
   visibility, onToggleVisibility,
   cameraAutoRotate, onToggleAutoRotate,
   cameraTopDown, onToggleTopDown,
   cameraLockOrientation, onToggleLockOrientation,
-  firstPerson, onToggleFirstPerson
+  firstPerson, onToggleFirstPerson,
+  autoCycleEnabled, onToggleAutoCycle,
+  autoCycleInterval, autoCycleIntervals, onSetAutoCycleInterval
 }) {
   const btnStyle = (on) => ({
     display: 'flex', alignItems: 'center', gap: 8,
@@ -988,6 +1033,27 @@ function ControlsPanel({
       <ToggleBtn on={cameraAutoRotate} onClick={onToggleAutoRotate} icon="[AR]" label="Auto Rotate" disabled={firstPerson} />
       <ToggleBtn on={cameraTopDown} onClick={onToggleTopDown} icon="[TD]" label="Top Down" disabled={firstPerson} />
       <ToggleBtn on={cameraLockOrientation} onClick={onToggleLockOrientation} icon="[LO]" label="Lock Orient." indent disabled={!cameraTopDown || firstPerson} />
+      <ToggleBtn on={autoCycleEnabled} onClick={onToggleAutoCycle} icon="[AC]" label="Auto Cycle" disabled={firstPerson} />
+      {autoCycleEnabled && !firstPerson && (
+        <div style={{ display: 'flex', gap: 4, marginLeft: 14, flexWrap: 'wrap' }}>
+          {autoCycleIntervals.map(sec => (
+            <button
+              key={sec}
+              onClick={() => onSetAutoCycleInterval(sec)}
+              style={{
+                padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
+                fontFamily: '"Courier New", monospace', fontSize: 11,
+                border: sec === autoCycleInterval ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
+                background: sec === autoCycleInterval ? 'rgba(74, 222, 128, 0.2)' : 'rgba(255,255,255,0.05)',
+                color: sec === autoCycleInterval ? '#4ADE80' : '#777',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {sec}s
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Visibility ── */}
       <SectionTitle>Visibility</SectionTitle>
@@ -996,13 +1062,13 @@ function ControlsPanel({
       <ToggleBtn on={visibility.furniture} onClick={() => onToggleVisibility('furniture')} icon="[F]" label="Furniture" />
     </div>
   );
-}
+});
 
 /* ════════════════════════════════════════════════════════════════
  *  TimeHUD – top-right overlay: clock, date, slider, speed btns
  * ════════════════════════════════════════════════════════════════ */
 
-function TimeHUD({ gameTime, timeSpeed, syncToReal, paused, onSetTimeSpeed, onToggleSyncReal, onSetHour, onTogglePaused }) {
+const TimeHUD = React.memo(function TimeHUD({ gameTime, timeSpeed, syncToReal, paused, onSetTimeSpeed, onToggleSyncReal, onSetHour, onTogglePaused }) {
   if (!gameTime) return null;
 
   const hours   = gameTime.getHours();
@@ -1097,7 +1163,7 @@ function TimeHUD({ gameTime, timeSpeed, syncToReal, paused, onSetTimeSpeed, onTo
       </div>
     </div>
   );
-}
+});
 
 /**
  * FurnitureTooltip - A small bubble that appears just above the cursor
