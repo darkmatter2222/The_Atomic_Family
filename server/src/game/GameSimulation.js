@@ -173,6 +173,8 @@ class GameSimulation {
       skills: m.skills,
       relationships: m.relationships,
       walkSpeed: m.walkSpeed,
+      interactionDuration: m.interactionDuration || 0,
+      interactionTimer: m.interactionTimer || 0,
       currentInteraction: m.currentInteraction ? {
         id: m.currentInteraction.id,
         label: m.currentInteraction.label,
