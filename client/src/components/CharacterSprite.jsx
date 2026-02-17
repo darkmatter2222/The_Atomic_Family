@@ -2,6 +2,7 @@ import React, { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { renderAllFrames } from '../game/SpriteRenderer';
+import { CATEGORIES, POSE_TRANSFORMS } from '../game/InteractionData';
 
 // Import sprite data
 import fatherWalk from '../sprites/father_walk.json';
@@ -28,22 +29,10 @@ const NAME_TO_SPRITE = {
 };
 
 /* ── Activity-animation colour coding (bubble background) ─── */
-const ACTIVITY_COLORS = {
-  cooking:       '#FF6B35',
-  eating:        '#4CAF50',
-  hygiene:       '#42A5F5',
-  chores:        '#AB47BC',
-  sleeping:      '#3F51B5',
-  entertainment: '#FFD600',
-  exercise:      '#00C853',
-  social:        '#FF4081',
-  relaxing:      '#26C6DA',
-  education:     '#FF9800',
-  errand:        '#8D6E63',
-  hobby:         '#7E57C2',
-  routine:       '#78909C',
-  transit:       '#90A4AE',
-};
+// Driven by CATEGORIES from interactions.json — thin alias for backward compat
+const ACTIVITY_COLORS = Object.fromEntries(
+  Object.entries(CATEGORIES).map(([k, v]) => [k, v.color])
+);
 
 /* ── Emoji / icon per animation hint ─────────────────────── */
 const ACTIVITY_ICONS = {
@@ -54,22 +43,10 @@ const ACTIVITY_ICONS = {
 };
 
 /* ── Per-category emoji for richer activity bubble icons ── */
-const CATEGORY_ICONS = {
-  cooking:       '🍳',
-  eating:        '🍽️',
-  hygiene:       '🚿',
-  chores:        '🧹',
-  sleeping:      '💤',
-  entertainment: '🎬',
-  exercise:      '🏃',
-  social:        '💬',
-  relaxing:      '☕',
-  education:     '📚',
-  errand:        '🚗',
-  hobby:         '🎨',
-  routine:       '⚙️',
-  transit:       '🚶',
-};
+// Driven by CATEGORIES from interactions.json
+const CATEGORY_ICONS = Object.fromEntries(
+  Object.entries(CATEGORIES).map(([k, v]) => [k, v.icon])
+);
 
 /**
  * CharacterSprite - A billboard sprite that renders pixel art from JSON data.
@@ -134,7 +111,7 @@ export default function CharacterSprite({ member, camera, onClick }) {
   const isSitting = member.activityAnim === 'sit';
   const isUsing = member.activityAnim === 'use' && isPerforming;
 
-  // ── Pose transforms ──────────────────────────────────────
+  // ── Pose transforms (driven by interactions.json) ────────
   // Sleeping: flatten horizontally (lying down)
   // Sitting: drop significantly + shrink (looks like they sat down)
   // Using: slight forward lean
@@ -142,17 +119,12 @@ export default function CharacterSprite({ member, camera, onClick }) {
   let scaleX = 1;
   let scaleY = 1;
 
-  if (isSleeping) {
-    yOffset = -spriteHeight * 0.32;   // much lower — lying down
-    scaleX = 1.4;                     // wider (body stretched out)
-    scaleY = 0.4;                     // very flat
-  } else if (isSitting) {
-    yOffset = -spriteHeight * 0.22;   // substantial drop — clearly seated
-    scaleX = 1.05;                    // ever so slightly wider (relaxed)
-    scaleY = 0.72;                    // shorter = legs hidden by furniture
-  } else if (isUsing) {
-    yOffset = -spriteHeight * 0.03;   // tiny dip — slight lean forward
-    scaleY = 0.95;                    // subtle compression (reaching/bending)
+  const poseKey = isSleeping ? 'sleep' : isSitting ? 'sit' : isUsing ? 'use' : null;
+  if (poseKey) {
+    const pose = POSE_TRANSFORMS[poseKey] || {};
+    yOffset = spriteHeight * (pose.yOffset || 0);
+    scaleX  = pose.scaleX  || 1;
+    scaleY  = pose.scaleY  || 1;
   }
 
   return (

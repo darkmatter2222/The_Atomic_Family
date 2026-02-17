@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { HOUSE_LAYOUT } from '../game/HouseLayout';
-import { getInteractionsForRole, filterByTimeWindow } from '../game/InteractionData';
+import { getInteractionsForRole, filterByTimeWindow, CATEGORIES } from '../game/InteractionData';
 
 /**
  * SidePane - Sliding info panel that appears when clicking players or rooms.
@@ -184,13 +184,10 @@ const STATE_LABELS = {
   performing: { text: 'Busy', color: '#F472B6' },
 };
 
-const CATEGORY_COLORS = {
-  cooking: '#FF6B35', eating: '#4CAF50', hygiene: '#42A5F5',
-  chores: '#AB47BC', sleeping: '#3F51B5', entertainment: '#FFD600',
-  exercise: '#00C853', social: '#FF4081', relaxing: '#26C6DA',
-  education: '#FF9800', errand: '#8D6E63', hobby: '#7E57C2',
-  routine: '#78909C', transit: '#90A4AE',
-};
+// Driven by CATEGORIES from interactions.json
+const CATEGORY_COLORS = Object.fromEntries(
+  Object.entries(CATEGORIES).map(([k, v]) => [k, v.color])
+);
 
 function getRoomDisplayName(roomId) {
   const room = HOUSE_LAYOUT.rooms.find(r => r.id === roomId);

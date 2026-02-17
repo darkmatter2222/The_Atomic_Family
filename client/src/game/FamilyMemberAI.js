@@ -12,6 +12,7 @@ import { createWalkableGrid, worldToGrid, getRandomWalkablePosition, getRoomAtPo
 import {
   INTERACTION_CATALOG,
   INTERACTION_MAP,
+  FURNITURE_ZONES,
   getInteractionsForRole,
   filterByTimeWindow,
   rollDuration
@@ -26,115 +27,8 @@ for (const f of HOUSE_LAYOUT.furniture) {
   FURNITURE_MAP[f.id] = f;
 }
 
-/**
- * INTERACTION ZONES — per-furniture rules for WHERE the character should stand
- * or sit when using that piece of furniture.
- *
- * approachSide: 'front' (+Z face), 'back' (-Z face), 'left' (-X), 'right' (+X),
- *               'center' (on top / inside the furniture itself),
- *               'custom' (use the x/z offset directly)
- * offset: { x, z } — world offset from furniture center to the use-position
- * snapTo: an alternative furnitureId — go to THAT furniture instead (e.g. watch_tv → couch)
- *
- * If a furniture id is not listed here, we fall back to the generic closest-
- * walkable-cell logic, but prefer the 'front' side (positive-Z face) first.
- */
-const INTERACTION_ZONES = {
-  // Kitchen — stand in front of counter appliances (counter faces -Z / toward room center)
-  fridge:        { approachSide: 'front', standOffset: 0.6 },
-  sink:          { approachSide: 'front', standOffset: 0.6 },
-  dishwasher:    { approachSide: 'front', standOffset: 0.6 },
-  stove:         { approachSide: 'front', standOffset: 0.6 },
-  microwave:     { approachSide: 'front', standOffset: 0.6 },
-  pantry:        { approachSide: 'right', standOffset: 0.6 },
-  kitchen_table: { approachSide: 'center', snapToNearest: ['kitchen_chair_1', 'kitchen_chair_2'] },
-  kitchen_chair_1: { approachSide: 'center' },
-  kitchen_chair_2: { approachSide: 'center' },
-
-  // Living room
-  couch:       { approachSide: 'center' },       // sit ON the couch
-  loveseat:    { approachSide: 'center' },
-  tv_stand:    { snapTo: 'couch' },              // watch TV → go sit on couch
-  tv:          { snapTo: 'couch' },              // watch TV → go sit on couch
-  coffee_table:{ snapTo: 'couch' },              // magazines → sit on couch
-  bookshelf:   { snapTo: 'couch' },              // grab book then sit on couch
-  end_table:   { snapTo: 'loveseat' },
-
-  // Master bedroom
-  master_bed:   { approachSide: 'center' },      // lie on the bed
-  nightstand_l: { approachSide: 'right', standOffset: 0.4 },
-  nightstand_r: { approachSide: 'left', standOffset: 0.4 },
-  dresser:      { approachSide: 'left', standOffset: 0.6 },
-  wardrobe:     { approachSide: 'left', standOffset: 0.6 },
-
-  // Bathroom — sink & mirror against -Z wall, so approach from +Z (back) side
-  toilet:       { approachSide: 'center' },
-  shower:       { approachSide: 'center' },
-  bath_sink:    { approachSide: 'back', standOffset: 0.5 },
-  bath_mirror:  { approachSide: 'back', standOffset: 0.5 },
-
-  // Laundry — washer/dryer/utility_sink are against +X wall, facing -X into the room
-  washer:        { approachSide: 'left', standOffset: 0.6 },
-  dryer:         { approachSide: 'left', standOffset: 0.6 },
-  utility_sink:  { approachSide: 'left', standOffset: 0.5 },
-  folding_table: { approachSide: 'front', standOffset: 0.5 },
-  laundry_basket:  { approachSide: 'front', standOffset: 0.4 },
-  laundry_basket_2:{ approachSide: 'front', standOffset: 0.4 },
-  ironing_board: { approachSide: 'right', standOffset: 0.5 },
-  drying_rack:   { approachSide: 'back', standOffset: 0.5 },
-  steam_press:   { approachSide: 'back', standOffset: 0.5 },
-  laundry_shelf: { approachSide: 'right', standOffset: 0.5 },
-
-  // Kids rooms
-  kids_bed_1:      { approachSide: 'center' },
-  kids_bed_2:      { approachSide: 'center' },
-  kids_bed_3:      { approachSide: 'center' },
-  toy_box:         { approachSide: 'front', standOffset: 0.5 },
-  kids_desk_shared:{ approachSide: 'center' },
-  kids_desk_single:{ approachSide: 'center' },
-  kids_bookshelf:  { approachSide: 'left', standOffset: 0.5 },
-  bean_bag:        { approachSide: 'center' },
-
-  // Garage
-  car:        { approachSide: 'right', standOffset: 1.2 },
-  workbench:  { approachSide: 'left', standOffset: 0.5 },
-  tool_shelf: { approachSide: 'left', standOffset: 0.5 },
-  bike:       { approachSide: 'center' },
-  lawn_mower: { approachSide: 'right', standOffset: 0.5 },
-
-  // Master closet
-  master_clothes_rod_l: { approachSide: 'left', standOffset: 0.6 },
-  master_clothes_rod_r: { approachSide: 'left', standOffset: 0.6 },
-  master_shoe_rack:     { approachSide: 'front', standOffset: 0.5 },
-  master_mirror:        { approachSide: 'right', standOffset: 0.5 },
-  master_storage_box:   { approachSide: 'left', standOffset: 0.5 },
-
-  // Kids closet
-  kids_clothes_rod_1: { approachSide: 'left', standOffset: 0.6 },
-  kids_clothes_rod_2: { approachSide: 'left', standOffset: 0.6 },
-  kids_shoe_rack:     { approachSide: 'front', standOffset: 0.5 },
-  kids_costume_box:   { approachSide: 'front', standOffset: 0.5 },
-  kids_storage_bins:  { approachSide: 'left', standOffset: 0.5 },
-
-  // Backyard
-  grill:          { approachSide: 'front', standOffset: 0.6 },
-  hot_tub:        { approachSide: 'center' },
-  picnic_table:   { approachSide: 'front', standOffset: 0.7 },
-  swimming_pool:  { approachSide: 'center' },
-  pool_chair_1:   { approachSide: 'center' },
-  pool_chair_2:   { approachSide: 'center' },
-  pool_diving_board: { approachSide: 'center' },
-  swing_set:      { approachSide: 'center' },
-  slide:          { approachSide: 'back', standOffset: 0.6 },
-  sandbox:        { approachSide: 'center' },
-  monkey_bars:    { approachSide: 'center' },
-  trampoline:     { approachSide: 'center' },
-  soccer_ball:    { approachSide: 'center' },
-  basketball:     { approachSide: 'center' },
-  beach_ball:     { approachSide: 'center' },
-  jump_rope:      { approachSide: 'center' },
-  garden_shed:    { approachSide: 'front', standOffset: 1.0 },
-};
+// Furniture zones (approach side, snap-to, offsets) are now driven
+// by the master interactions.json via FURNITURE_ZONES from InteractionData.
 
 /**
  * State machine states
@@ -166,14 +60,14 @@ function pickInteraction(role, gameHour) {
 
 /**
  * Compute the exact world position where a character should go
- * to use a piece of furniture, using the INTERACTION_ZONES rules.
+ * to use a piece of furniture, using the FURNITURE_ZONES rules.
  *
  * Returns { x, z, atFurniture: furnitureId } or null if furniture doesn't exist.
  */
 function getInteractionPosition(furnitureId) {
   // Resolve snapTo chains (e.g. tv → couch)
   let resolvedId = furnitureId;
-  const zone = INTERACTION_ZONES[furnitureId];
+  const zone = FURNITURE_ZONES[furnitureId];
   if (zone?.snapTo) {
     resolvedId = zone.snapTo;
   } else if (zone?.snapToNearest) {
@@ -184,7 +78,7 @@ function getInteractionPosition(furnitureId) {
   const furn = FURNITURE_MAP[resolvedId];
   if (!furn) return null;
 
-  const resolvedZone = INTERACTION_ZONES[resolvedId] || {};
+  const resolvedZone = FURNITURE_ZONES[resolvedId] || {};
   const side = resolvedZone.approachSide || 'front';
   const standOff = resolvedZone.standOffset || 0.5;
 
@@ -255,7 +149,7 @@ function getInteractionPosition(furnitureId) {
  * on/in the furniture instead of standing nearby.
  */
 function snapToFurnitureCenter(position, furnitureId) {
-  const zone = INTERACTION_ZONES[furnitureId];
+  const zone = FURNITURE_ZONES[furnitureId];
   if (!zone || zone.approachSide !== 'center') return position;
 
   const furn = FURNITURE_MAP[furnitureId];
