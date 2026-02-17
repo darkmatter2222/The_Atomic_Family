@@ -22,8 +22,10 @@ import {
   decayNeeds,
   applyNeedsEffects,
   applySkillEffects,
-  getCriticalNeeds
+  getCriticalNeeds,
+  getBodyAnimForInteraction
 } from './InteractionData';
+import { getBodyAnimSpeed, getBodyAnimFrameCount } from './ActivityAnimator';
 
 // Create the walkable grid once
 const gridData = createWalkableGrid(2);
@@ -233,6 +235,8 @@ export function createFamilyMemberState(name, role, startX, startZ) {
     interactionDuration: 0,        // total seconds to perform
     activityLabel: null,           // e.g. "Cooking dinner" – displayed on sprite
     activityAnim: null,            // animation hint: 'sit', 'sleep', 'use', 'walk'
+    activityAnimFrame: 0,          // current frame in the body animation cycle
+    activityAnimTimer: 0,          // seconds since last body anim frame change
     targetFurniture: null,         // furniture id the character is headed to / using
     // ── Needs, Skills, Relationships, Inventory ──
     needs: createInitialNeeds(),
@@ -423,12 +427,18 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
     // ── PERFORMING ───────────────────────────────────────
     case STATE.PERFORMING: {
       updated.interactionTimer += deltaTime;
-      updated.animFrame = 0;  // standing still frame (overridden by activity visuals)
+      updated.animFrame = 0;  // walk frame stays standing
 
-      // Slow idle-style animation while performing (gentle bob)
-      updated.animTimer += deltaTime;
-      if (updated.animTimer > 0.5) {
-        updated.animTimer = 0;
+      // ── Activity body-animation frame cycling ──
+      if (updated.currentInteraction) {
+        const bodyAnim = getBodyAnimForInteraction(updated.currentInteraction);
+        const animSpeed = getBodyAnimSpeed(bodyAnim);
+        const frameCount = getBodyAnimFrameCount(bodyAnim);
+        updated.activityAnimTimer = (updated.activityAnimTimer || 0) + deltaTime;
+        if (animSpeed > 0 && updated.activityAnimTimer >= (1 / animSpeed)) {
+          updated.activityAnimTimer = 0;
+          updated.activityAnimFrame = ((updated.activityAnimFrame || 0) + 1) % frameCount;
+        }
       }
 
       // ── Gradually apply needs & skill effects during the action ──
@@ -469,6 +479,8 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.currentInteraction = null;
         updated.activityLabel = null;
         updated.activityAnim = null;
+        updated.activityAnimFrame = 0;
+        updated.activityAnimTimer = 0;
         updated.interactionTimer = 0;
         updated.interactionDuration = 0;
         updated.targetFurniture = null;

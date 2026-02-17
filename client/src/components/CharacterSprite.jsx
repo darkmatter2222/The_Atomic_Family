@@ -2,7 +2,8 @@ import React, { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { renderAllFrames } from '../game/SpriteRenderer';
-import { CATEGORIES, POSE_TRANSFORMS } from '../game/InteractionData';
+import { CATEGORIES, POSE_TRANSFORMS, getBodyAnimForInteraction } from '../game/InteractionData';
+import { getActivityFrames } from '../game/ActivityAnimator';
 
 // Import sprite data
 import fatherWalk from '../sprites/father_walk.json';
@@ -75,6 +76,21 @@ export default function CharacterSprite({ member, camera, onClick }) {
     });
   }, [frameCanvases]);
 
+  // ── Activity animation textures (generated per-interaction) ──
+  const activityInteractionId = member.currentInteraction?.id || null;
+  const activityTextures = useMemo(() => {
+    if (!member.currentInteraction) return null;
+    const bodyAnim = getBodyAnimForInteraction(member.currentInteraction);
+    const actCanvases = getActivityFrames(spriteData, bodyAnim, 4);
+    return actCanvases.map(canvas => {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    });
+  }, [spriteData, activityInteractionId]);
+
   // Sprite dimensions in world space
   const spriteWidth = useMemo(() => {
     const isChild = member.role === 'son' || member.role === 'daughter';
@@ -86,11 +102,18 @@ export default function CharacterSprite({ member, camera, onClick }) {
     return isChild ? 1.0 : 1.4;
   }, [member.role]);
 
-  // Update texture based on animation frame
+  // Update texture based on animation frame —
+  // Use activity textures during PERFORMING, walk textures otherwise
+  const isPerformingNow = member.state === 'performing' && member.currentInteraction;
   useEffect(() => {
-    const tex = textures[member.animFrame % textures.length];
-    if (tex) setCurrentTexture(tex);
-  }, [member.animFrame, textures]);
+    if (isPerformingNow && activityTextures && activityTextures.length > 0) {
+      const idx = (member.activityAnimFrame || 0) % activityTextures.length;
+      if (activityTextures[idx]) setCurrentTexture(activityTextures[idx]);
+    } else {
+      const tex = textures[member.animFrame % textures.length];
+      if (tex) setCurrentTexture(tex);
+    }
+  }, [member.animFrame, member.activityAnimFrame, textures, activityTextures, isPerformingNow]);
 
   // Billboard effect: always face camera
   useFrame(({ camera }) => {

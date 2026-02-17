@@ -18,6 +18,8 @@ export const NEEDS_DEFS          = catalogData.needs;
 export const SKILLS_DEFS         = catalogData.skills;
 export const RELATIONSHIPS_DEF   = catalogData.relationships;
 export const INVENTORY_DEF       = catalogData.inventory;
+export const BODY_ANIM_DEFAULTS  = catalogData.bodyAnimDefaults;
+export const BODY_ANIM_OVERRIDES = catalogData.bodyAnimOverrides;
 
 //  Derived look-ups 
 
@@ -100,6 +102,17 @@ export function getFurnitureZone(furnitureId) {
  */
 export function getPoseTransform(animation) {
   return POSE_TRANSFORMS[animation] || POSE_TRANSFORMS.walk;
+}
+
+/**
+ * Get the body animation type for an interaction.
+ * Checks per-interaction overrides first, then category defaults.
+ */
+export function getBodyAnimForInteraction(interaction) {
+  if (!interaction) return 'stand_use';
+  return BODY_ANIM_OVERRIDES[interaction.id]
+      || BODY_ANIM_DEFAULTS[interaction.category]
+      || 'stand_use';
 }
 
 /**
