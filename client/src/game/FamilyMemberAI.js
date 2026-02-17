@@ -15,7 +15,14 @@ import {
   FURNITURE_ZONES,
   getInteractionsForRole,
   filterByTimeWindow,
-  rollDuration
+  rollDuration,
+  createInitialNeeds,
+  createInitialSkills,
+  createInitialRelationships,
+  decayNeeds,
+  applyNeedsEffects,
+  applySkillEffects,
+  getCriticalNeeds
 } from './InteractionData';
 
 // Create the walkable grid once
@@ -41,21 +48,64 @@ const STATE = {
 };
 
 /**
- * Pick the best interaction for this member given the current game hour.
- * Uses weighted-random selection based on priority.
+ * Mapping from need names to interaction categories (and keywords) that
+ * address them.  Used by needs-aware picking to heavily prefer actions
+ * that satisfy a character's most critical shortfall.
  */
-function pickInteraction(role, gameHour) {
+const NEED_CATEGORY_MAP = {
+  energy:    ['sleeping'],
+  hunger:    ['eating', 'cooking'],
+  hydration: ['eating'],
+  hygiene:   ['hygiene'],
+  bladder:   ['hygiene'],      // use_toilet is category 'hygiene'
+  fun:       ['entertainment', 'hobby', 'exercise'],
+  social:    ['social'],
+  comfort:   ['relaxing', 'sleeping']
+};
+
+/**
+ * Pick the best interaction for this member given the current game hour.
+ * Needs-aware: interactions whose needsEffects restore a critical need get
+ * a large priority boost so the character self-manages.
+ */
+function pickInteraction(role, gameHour, needs) {
   let pool = getInteractionsForRole(role);
   pool = filterByTimeWindow(pool, gameHour);
   if (pool.length === 0) return null;
 
-  const totalWeight = pool.reduce((sum, i) => sum + i.priority, 0);
+  // Identify critical needs (below 25)
+  const critical = needs ? getCriticalNeeds(needs, 25) : [];
+
+  // Build a weighted pool: base priority + needs urgency bonus
+  const weighted = pool.map(interaction => {
+    let weight = interaction.priority;
+
+    for (const { key, value } of critical) {
+      // Check if this interaction directly restores the critical need
+      const fx = interaction.needsEffects || {};
+      if (fx[key] && fx[key] > 0) {
+        // Urgency multiplier: the lower the need, the higher the boost
+        const urgency = (25 - value) / 25;   // 0..1
+        weight += 15 * urgency;               // up to +15 priority
+      }
+      // Also boost by category match (softer signal)
+      const cats = NEED_CATEGORY_MAP[key] || [];
+      if (cats.includes(interaction.category)) {
+        const urgency = (25 - value) / 25;
+        weight += 5 * urgency;
+      }
+    }
+
+    return { interaction, weight };
+  });
+
+  const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
   let r = Math.random() * totalWeight;
-  for (const interaction of pool) {
-    r -= interaction.priority;
+  for (const { interaction, weight } of weighted) {
+    r -= weight;
     if (r <= 0) return interaction;
   }
-  return pool[pool.length - 1];
+  return weighted[weighted.length - 1].interaction;
 }
 
 /**
@@ -183,7 +233,14 @@ export function createFamilyMemberState(name, role, startX, startZ) {
     interactionDuration: 0,        // total seconds to perform
     activityLabel: null,           // e.g. "Cooking dinner" – displayed on sprite
     activityAnim: null,            // animation hint: 'sit', 'sleep', 'use', 'walk'
-    targetFurniture: null          // furniture id the character is headed to / using
+    targetFurniture: null,         // furniture id the character is headed to / using
+    // ── Needs, Skills, Relationships, Inventory ──
+    needs: createInitialNeeds(),
+    skills: createInitialSkills(),
+    relationships: createInitialRelationships(),
+    inventory: [],
+    // Track how much of the current interaction's effects have been applied
+    effectsApplied: 0              // fraction 0-1 of needsEffects/skillEffects applied so far
   };
 }
 
@@ -197,11 +254,22 @@ export function createFamilyMemberState(name, role, startX, startZ) {
 export function updateFamilyMember(member, deltaTime, gameHour = 12) {
   const updated = { ...member };
 
+  // ── Needs decay every tick (convert deltaTime seconds → game-hours) ──
+  // deltaTime is already scaled by timeSpeed in the caller, and
+  // interactionDuration is in "real seconds at current speed", so
+  // we need the game-hours that passed this tick.
+  // The caller passes deltaTime already multiplied by gameSpeed,
+  // and 1 real-second at 1× speed = 1 game-second = 1/3600 game-hour.
+  const gameHoursElapsed = deltaTime / 3600;
+  if (gameHoursElapsed > 0) {
+    updated.needs = decayNeeds(updated.needs, gameHoursElapsed, gameHour);
+  }
+
   switch (updated.state) {
     // ── CHOOSING ─────────────────────────────────────────
     case STATE.CHOOSING: {
-      // 15% chance to just wander randomly (keeps things natural)
-      const wander = Math.random() < 0.15;
+      // 10% chance to just wander randomly (reduced from 15% — needs-aware picking is smarter now)
+      const wander = Math.random() < 0.10;
 
       if (wander) {
         const dest = getRandomWalkablePosition();
@@ -224,8 +292,8 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         break;
       }
 
-      // Pick an interaction
-      const interaction = pickInteraction(updated.role, gameHour);
+      // Pick an interaction (needs-aware)
+      const interaction = pickInteraction(updated.role, gameHour, updated.needs);
       if (!interaction) {
         updated.idleTimer = 0;
         updated.idleDuration = 1;
@@ -244,6 +312,7 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.activityAnim = interaction.animation;
         updated.state = STATE.PERFORMING;
         updated.targetFurniture = null;
+        updated.effectsApplied = 0;
         break;
       }
 
@@ -279,6 +348,7 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
           const snapped = snapToFurnitureCenter(updated.position, dest.atFurniture);
           updated.position = snapped;
           updated.state = STATE.PERFORMING;
+          updated.effectsApplied = 0;
         } else {
           // Too far and can't pathfind — skip this interaction, pick again soon
           updated.state = STATE.IDLE;
@@ -305,6 +375,7 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
           updated.activityAnim = updated.currentInteraction.animation;
           updated.state = STATE.PERFORMING;
           updated.animFrame = 0;
+          updated.effectsApplied = 0;
         } else {
           // Random walk — short idle
           updated.state = STATE.IDLE;
@@ -360,7 +431,40 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.animTimer = 0;
       }
 
+      // ── Gradually apply needs & skill effects during the action ──
+      if (updated.currentInteraction && updated.interactionDuration > 0) {
+        const progress = Math.min(updated.interactionTimer / updated.interactionDuration, 1);
+        const newFraction = progress - (updated.effectsApplied || 0);
+        if (newFraction > 0) {
+          updated.needs = applyNeedsEffects(
+            updated.needs,
+            updated.currentInteraction.needsEffects,
+            newFraction
+          );
+          updated.skills = applySkillEffects(
+            updated.skills,
+            updated.currentInteraction.skillEffects,
+            newFraction
+          );
+          updated.effectsApplied = progress;
+        }
+      }
+
       if (updated.interactionTimer >= updated.interactionDuration) {
+        // Apply any remaining fraction of effects (rounding safety)
+        if (updated.currentInteraction && (updated.effectsApplied || 0) < 1) {
+          const remaining = 1 - (updated.effectsApplied || 0);
+          updated.needs = applyNeedsEffects(
+            updated.needs,
+            updated.currentInteraction.needsEffects,
+            remaining
+          );
+          updated.skills = applySkillEffects(
+            updated.skills,
+            updated.currentInteraction.skillEffects,
+            remaining
+          );
+        }
         // Done — clear interaction and go back to choosing
         updated.currentInteraction = null;
         updated.activityLabel = null;
@@ -368,6 +472,7 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.interactionTimer = 0;
         updated.interactionDuration = 0;
         updated.targetFurniture = null;
+        updated.effectsApplied = 0;
         // Reset Y to floor level (step off furniture)
         updated.position = { ...updated.position, y: 0 };
         updated.state = STATE.IDLE;
@@ -423,6 +528,7 @@ export function commandFamilyMember(member, interactionId) {
     updated.activityAnim = interaction.animation;
     updated.targetFurniture = null;
     updated.state = STATE.PERFORMING;
+    updated.effectsApplied = 0;
     return updated;
   }
 
@@ -451,6 +557,7 @@ export function commandFamilyMember(member, interactionId) {
     updated.activityAnim = interaction.animation;
     updated.targetFurniture = dest.atFurniture;
     updated.state = STATE.PERFORMING;
+    updated.effectsApplied = 0;
   }
 
   return updated;
