@@ -92,6 +92,26 @@ io.on('connection', (socket) => {
     simulation.toggleLightsAuto();
   });
 
+  // ── Agentic AI controls ──
+  socket.on('setAgenticEnabled', (enabled) => {
+    simulation.setAgenticEnabled(!!enabled);
+  });
+
+  socket.on('getAgenticStats', (callback) => {
+    if (typeof callback === 'function') {
+      callback(simulation.getAgenticStats());
+    }
+  });
+
+  socket.on('getConversationLog', (callback) => {
+    if (typeof callback === 'function') {
+      const log = simulation.agenticEngine
+        ? simulation.agenticEngine.socialEngine.getConversationLog()
+        : [];
+      callback(log);
+    }
+  });
+
   // ── Legacy: requestGameState (backwards compat) ──
   socket.on('requestGameState', () => {
     simulation.sendFullState(socket);

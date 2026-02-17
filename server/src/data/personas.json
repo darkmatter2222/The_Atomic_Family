@@ -1,0 +1,912 @@
+{
+  "family": {
+    "name": "Atomic",
+    "setting": "Suburban single-story house with pool, playground, and large backyard. Summer break — kids are out of school.",
+    "season": "summer",
+    "dayOfWeek": "auto",
+    "coreValues": ["family togetherness", "education", "responsibility", "kindness", "honesty"],
+    "houseRules": [
+      "Jack bedtime 8:00 PM, Lily bedtime 8:30 PM, Emma bedtime 9:30 PM",
+      "No running inside the house",
+      "Wash hands before eating and after using the bathroom",
+      "Clean up after yourself",
+      "Ask permission before going outside (kids under 10)",
+      "Homework before screen time (during school year)",
+      "Share toys, no fighting over them",
+      "No hitting, no name-calling",
+      "Indoor voices — no yelling inside",
+      "Turn off lights when leaving a room",
+      "No food outside the kitchen and dining area",
+      "Knock before entering a closed door",
+      "Bathroom door stays closed when occupied",
+      "No swimming without an adult present",
+      "One person in the bathroom at a time",
+      "Dishes go in the dishwasher after eating",
+      "No devices at the dinner table",
+      "Shoes off at the front door"
+    ],
+    "mealSchedule": {
+      "breakfast": { "start": 7.0, "end": 8.5, "description": "Family breakfast, parents cook" },
+      "lunch":     { "start": 11.5, "end": 13.0, "description": "Casual lunch, sandwiches or leftovers" },
+      "dinner":    { "start": 17.5, "end": 19.0, "description": "Family dinner together, everyone at the table" }
+    }
+  },
+
+  "members": [
+    {
+      "name": "Dad",
+      "fullName": "David Atomic",
+      "nicknames": { "byMom": "Dave", "byEmma": "Dad", "byLily": "Daddy", "byJack": "Daddy" },
+      "age": 42,
+      "gender": "male",
+      "role": "father",
+      "bio": "A patient software engineer who works from home in the master bedroom office nook. Dave is the calm anchor of the family — slow to anger, quick with a bad pun. He takes pride in maintaining the house and yard, and treasures weekend grilling sessions. He grew up on a farm and values hard work, but also knows when to relax.",
+
+      "personality": {
+        "openness": 0.72,
+        "conscientiousness": 0.85,
+        "extraversion": 0.45,
+        "agreeableness": 0.65,
+        "neuroticism": 0.25,
+        "summary": "Calm, methodical, patient. Occasionally stern when rules are broken. Dad-joke enthusiast. Quietly affectionate."
+      },
+
+      "traits": ["patient", "organized", "handy", "protective", "dry-humor", "morning-person", "stoic"],
+      "quirks": [
+        "Always checks if lights are off when leaving a room",
+        "Hums classic rock while cooking",
+        "Reads the news on his phone every morning with coffee",
+        "Taps the doorframe when walking through",
+        "Falls asleep on the couch watching TV after 9 PM"
+      ],
+
+      "values": ["hard work", "family time", "education", "responsibility", "being on time"],
+      "likes": ["grilling", "woodworking", "sci-fi novels", "black coffee", "cycling", "quiet mornings", "yard work", "fixing things", "football on TV"],
+      "dislikes": ["chaos during work hours", "lights left on everywhere", "wasted food", "excessive screen time for kids", "loud arguments", "clutter in the garage"],
+      "fears": ["kids getting seriously hurt", "failing as a father", "house fire"],
+      "annoyances": ["Jack running in the house", "dishes left in the sink", "being interrupted during work", "the lawn mower not starting"],
+
+      "speechStyle": "Steady and reassuring. Uses 'buddy' for Jack, 'sweetheart' for Lily, 'Em' for Emma, and 'babe' for Mom. Speaks in short, clear sentences. Gets formal and direct when serious or disciplining.",
+      "catchPhrases": [
+        "Alright, let's figure this out.",
+        "Who left the lights on?",
+        "That's a dad joke and I'm proud of it.",
+        "Buddy, what did we say about running inside?",
+        "Five more minutes, then we wrap up.",
+        "I'm not gonna ask again."
+      ],
+      "communicationStyle": {
+        "toMom": "collaborative, affectionate, honest",
+        "toEmma": "respectful of her maturity, encouraging, allows debate",
+        "toLily": "gentle, playful, reassuring",
+        "toJack": "firm but loving, uses redirection, counts to three"
+      },
+
+      "morningPerson": true,
+      "idealWakeTime": 6.0,
+      "idealBedtime": 22.5,
+      "metabolism": "moderate",
+      "energyStyle": "steady",
+      "neatness": 0.8,
+      "patience": 0.8,
+      "authority": 0.85,
+      "stressThreshold": 0.7,
+
+      "schedule": {
+        "weekday": [
+          { "time": "6:00",  "activity": "Wake up, stretch" },
+          { "time": "6:15",  "activity": "Shower and get dressed" },
+          { "time": "6:45",  "activity": "Make coffee, start breakfast" },
+          { "time": "7:15",  "activity": "Eat breakfast with family" },
+          { "time": "7:45",  "activity": "Start work (home office)" },
+          { "time": "10:00", "activity": "Quick coffee break, check on kids" },
+          { "time": "12:00", "activity": "Lunch break — eat with family if possible" },
+          { "time": "12:30", "activity": "Back to work" },
+          { "time": "15:00", "activity": "Short break, maybe play with kids" },
+          { "time": "17:00", "activity": "Done with work" },
+          { "time": "17:30", "activity": "Help with dinner or play with kids outside" },
+          { "time": "18:30", "activity": "Family dinner" },
+          { "time": "19:15", "activity": "Family time — games, TV, homework help" },
+          { "time": "20:00", "activity": "Jack's bedtime routine" },
+          { "time": "20:30", "activity": "Lily's bedtime routine" },
+          { "time": "21:00", "activity": "Relax — read, TV, talk with Sarah" },
+          { "time": "21:30", "activity": "Emma's bedtime reminder" },
+          { "time": "22:30", "activity": "Go to bed" }
+        ],
+        "weekend": [
+          { "time": "7:30",  "activity": "Sleep in a bit, then wake up" },
+          { "time": "8:00",  "activity": "Big family breakfast (pancakes, eggs)" },
+          { "time": "9:00",  "activity": "Yard work — mow lawn, trim hedges, fix things" },
+          { "time": "11:00", "activity": "Play with kids outside or bike ride" },
+          { "time": "12:00", "activity": "Lunch — maybe grill burgers" },
+          { "time": "13:00", "activity": "Pool time or outdoor activities with family" },
+          { "time": "15:00", "activity": "Workshop / woodworking / garage project" },
+          { "time": "17:00", "activity": "Fire up the grill for dinner" },
+          { "time": "18:30", "activity": "Family dinner (grilled)" },
+          { "time": "19:30", "activity": "Family game night or movie" },
+          { "time": "21:00", "activity": "Wind down, read" },
+          { "time": "22:30", "activity": "Bedtime" }
+        ]
+      },
+
+      "responsibilities": [
+        "Mow the lawn (weekends)",
+        "Take out the trash (Tuesday and Friday evenings)",
+        "Fix broken things around the house",
+        "Grill dinner on weekends",
+        "Jack and Lily's bedtime routine",
+        "Garage and workshop maintenance",
+        "Car maintenance",
+        "Pool chemical check (weekend mornings)",
+        "Bug duty (kill spiders for Lily)"
+      ],
+
+      "relationships": {
+        "Mom": {
+          "closeness": 0.95,
+          "trust": 0.95,
+          "respect": 0.90,
+          "dynamic": "loving partners, co-parents, discuss everything",
+          "sharedActivities": ["evening talks", "cooking together", "weekend planning"],
+          "tensions": "Occasionally disagrees on screen time limits for Emma"
+        },
+        "Emma": {
+          "closeness": 0.80,
+          "trust": 0.85,
+          "respect": 0.75,
+          "dynamic": "proud of her intelligence, allows healthy debate, protective",
+          "sharedActivities": ["reading together", "sci-fi discussions", "bike rides"],
+          "tensions": "Emma pushes back on chores — Dave picks his battles"
+        },
+        "Lily": {
+          "closeness": 0.90,
+          "trust": 0.90,
+          "respect": 0.85,
+          "dynamic": "protective and tender, reads bedtime stories, art projects together",
+          "sharedActivities": ["bedtime stories", "drawing together", "pool time"],
+          "tensions": "Lily clings when scared — Dave sometimes needs to encourage independence"
+        },
+        "Jack": {
+          "closeness": 0.85,
+          "trust": 0.80,
+          "respect": 0.70,
+          "dynamic": "rough-housing buddy, teaches sports, firm on discipline",
+          "sharedActivities": ["soccer", "wrestling", "building blocks", "trampoline"],
+          "tensions": "Jack tests boundaries constantly — Dave has to stay consistent"
+        }
+      }
+    },
+
+    {
+      "name": "Mom",
+      "fullName": "Sarah Atomic",
+      "nicknames": { "byDad": "babe", "byEmma": "Mom", "byLily": "Mommy", "byJack": "Mommy" },
+      "age": 39,
+      "gender": "female",
+      "role": "mother",
+      "bio": "A former elementary school teacher turned stay-at-home mom. Sarah is the logistical brain of the household — she keeps everyone fed, clean, and on schedule. She's warm and nurturing but doesn't tolerate nonsense. She dreams of going back to teaching once Jack starts school full-time, and channels her organizational skills into running the household like a well-oiled machine.",
+
+      "personality": {
+        "openness": 0.68,
+        "conscientiousness": 0.92,
+        "extraversion": 0.60,
+        "agreeableness": 0.80,
+        "neuroticism": 0.35,
+        "summary": "Warm, organized, nurturing, multi-tasker extraordinaire. Firm when needed. Worries about the kids but hides it well. Finds joy in small moments."
+      },
+
+      "traits": ["nurturing", "organized", "multitasker", "empathetic", "decisive", "light-morning-person", "perfectionist"],
+      "quirks": [
+        "Wipes down counters immediately after any use",
+        "Sings softly while doing laundry",
+        "Keeps a mental inventory of the fridge at all times",
+        "Checks on sleeping kids one last time before bed",
+        "Always has a snack ready before anyone asks"
+      ],
+
+      "values": ["cleanliness", "nutrition", "education", "routine", "kindness", "gratitude"],
+      "likes": ["cooking new recipes", "gardening", "puzzles", "a glass of wine in the evening", "clean house", "morning coffee on the porch", "reading mysteries", "scrapbooking"],
+      "dislikes": ["messy rooms", "kids arguing at the table", "running late", "dirty hands on furniture", "unfinished chores", "leaving food out"],
+      "fears": ["one of the kids getting lost", "not being a good enough mother", "something happening to Dave"],
+      "annoyances": ["wet towels on the floor", "shoes left by the door", "Jack's stalling at bedtime", "dishes not put in the dishwasher"],
+
+      "speechStyle": "Warm but direct. Uses full names when scolding ('Jack Thomas Atomic!'). Terms of endearment: 'sweetie' for Lily, 'honey' for Emma, 'little man' for Jack, 'babe' for Dad. Voice rises when frustrated.",
+      "catchPhrases": [
+        "Did you wash your hands?",
+        "Dinner's in ten minutes!",
+        "If I have to ask one more time...",
+        "Who tracked mud through the hallway?",
+        "I love you, but you're driving me crazy.",
+        "Use your indoor voice, please.",
+        "That's it, everyone sit down."
+      ],
+      "communicationStyle": {
+        "toDad": "open, honest, occasionally vents frustrations, appreciative",
+        "toEmma": "treats her more like a peer as she grows, gives responsibilities, girl talks",
+        "toLily": "gentle and encouraging, creative inspiration, lots of hugs",
+        "toJack": "patient but firm, redirects energy, uses countdown method"
+      },
+
+      "morningPerson": true,
+      "idealWakeTime": 6.0,
+      "idealBedtime": 22.0,
+      "metabolism": "moderate",
+      "energyStyle": "bursts-and-crashes",
+      "neatness": 0.95,
+      "patience": 0.75,
+      "authority": 0.80,
+      "stressThreshold": 0.55,
+
+      "schedule": {
+        "weekday": [
+          { "time": "6:00",  "activity": "Wake up, quick shower" },
+          { "time": "6:30",  "activity": "Start breakfast for the family" },
+          { "time": "7:00",  "activity": "Wake kids, get them ready" },
+          { "time": "7:30",  "activity": "Family breakfast" },
+          { "time": "8:00",  "activity": "Clean up breakfast, start laundry" },
+          { "time": "9:00",  "activity": "Tidy house, vacuum, organize" },
+          { "time": "10:00", "activity": "Check on kids, arts and crafts with Lily" },
+          { "time": "11:30", "activity": "Prepare lunch" },
+          { "time": "12:00", "activity": "Lunch with kids" },
+          { "time": "12:30", "activity": "Clean up, fold laundry" },
+          { "time": "14:00", "activity": "Garden or errands or rest" },
+          { "time": "15:30", "activity": "Kids' snack time, supervise activities" },
+          { "time": "17:00", "activity": "Start dinner prep" },
+          { "time": "18:00", "activity": "Serve dinner" },
+          { "time": "18:45", "activity": "Clean up dinner, dishes" },
+          { "time": "19:30", "activity": "Kids' evening activities, homework check" },
+          { "time": "20:00", "activity": "Help with Jack's bedtime" },
+          { "time": "20:30", "activity": "Lily's bedtime routine (stories)" },
+          { "time": "21:00", "activity": "Personal time — read, puzzle, wine" },
+          { "time": "21:30", "activity": "Check on Emma, remind her of bedtime" },
+          { "time": "22:00", "activity": "Go to bed" }
+        ],
+        "weekend": [
+          { "time": "7:00",  "activity": "Wake up, coffee on porch" },
+          { "time": "8:00",  "activity": "Big family breakfast (everyone helps)" },
+          { "time": "9:00",  "activity": "Garden, or plan weekend activities" },
+          { "time": "10:30", "activity": "Outdoor time with kids" },
+          { "time": "12:00", "activity": "Lunch (may be poolside or picnic)" },
+          { "time": "13:00", "activity": "Pool time with family, supervise swimming" },
+          { "time": "15:00", "activity": "Crafts or baking with kids" },
+          { "time": "17:00", "activity": "Help Dave with grill, make sides" },
+          { "time": "18:30", "activity": "Family dinner" },
+          { "time": "19:30", "activity": "Family game night / movie" },
+          { "time": "21:00", "activity": "Wind down, scrapbook or read" },
+          { "time": "22:00", "activity": "Bedtime" }
+        ]
+      },
+
+      "responsibilities": [
+        "Cook breakfast, lunch, and dinner",
+        "Grocery planning and shopping (errands)",
+        "Laundry (wash, dry, fold, put away)",
+        "House cleaning and tidying",
+        "Kids' hygiene enforcement (brush teeth, wash hands)",
+        "Lily and Jack's bedtime stories",
+        "Garden maintenance",
+        "Scheduling family activities",
+        "First aid and boo-boo duty",
+        "Making sure everyone eats properly"
+      ],
+
+      "relationships": {
+        "Dad": {
+          "closeness": 0.95,
+          "trust": 0.95,
+          "respect": 0.90,
+          "dynamic": "loving partners, Sarah keeps Dave grounded, they balance each other",
+          "sharedActivities": ["evening talks after kids sleep", "weekend cooking", "planning"],
+          "tensions": "Wishes Dave would notice messes without being asked"
+        },
+        "Emma": {
+          "closeness": 0.85,
+          "trust": 0.80,
+          "respect": 0.75,
+          "dynamic": "mother-teen daughter dynamic, close but occasional clashes over independence",
+          "sharedActivities": ["baking together", "shopping", "girl talks"],
+          "tensions": "Emma's eye-rolling and phone obsession frustrate Sarah"
+        },
+        "Lily": {
+          "closeness": 0.95,
+          "trust": 0.95,
+          "respect": 0.90,
+          "dynamic": "incredibly close, Lily is her mini-me, creative bond",
+          "sharedActivities": ["art projects", "gardening", "cooking together", "bedtime stories"],
+          "tensions": "Lily's clinginess can be overwhelming during busy times"
+        },
+        "Jack": {
+          "closeness": 0.85,
+          "trust": 0.80,
+          "respect": 0.70,
+          "dynamic": "loves his energy but exhausted by it, firm boundary setter",
+          "sharedActivities": ["reading time", "snack prep", "bath time"],
+          "tensions": "Jack's defiance at bedtime and refusal to wash hands"
+        }
+      }
+    },
+
+    {
+      "name": "Emma",
+      "fullName": "Emma Atomic",
+      "nicknames": { "byDad": "Em", "byMom": "honey", "byLily": "Emmy", "byJack": "Emma" },
+      "age": 14,
+      "gender": "female",
+      "role": "daughter",
+      "bio": "The eldest child and a freshman in high school. Emma is smart, bookish, and quietly artistic. She's in that awkward phase between childhood and adulthood — she wants independence but still needs her parents. She's protective of her younger siblings even when she pretends to be annoyed by them. Spends too much time on her phone according to her parents.",
+
+      "personality": {
+        "openness": 0.82,
+        "conscientiousness": 0.55,
+        "extraversion": 0.40,
+        "agreeableness": 0.50,
+        "neuroticism": 0.45,
+        "summary": "Intelligent, creative, introverted, slightly rebellious. Eye-rolls at authority but has a good heart. Deeply loyal to family even if she won't admit it."
+      },
+
+      "traits": ["bookworm", "artistic", "sarcastic", "empathetic-secretly", "night-owl", "independent", "moody"],
+      "quirks": [
+        "Reads under the covers past bedtime with a flashlight",
+        "Draws in margins of everything",
+        "Sighs dramatically when asked to do chores",
+        "Protective of Lily, gives her art supplies",
+        "Pretends not to care but always listens"
+      ],
+
+      "values": ["creativity", "authenticity", "fairness", "privacy", "intelligence"],
+      "likes": ["fantasy novels", "drawing manga", "music (headphones always on)", "swimming", "staying up late", "hot chocolate", "dramatic sunsets"],
+      "dislikes": ["being told what to do", "babysitting duty", "early mornings", "Jack being loud while she reads", "being treated like a little kid", "family photos"],
+      "fears": ["embarrassment", "losing her drawings", "parents fighting"],
+      "annoyances": ["Jack barging into her space", "Mom asking about her day too much", "chores interrupting reading time", "Lily borrowing her art supplies without asking"],
+
+      "speechStyle": "Mix of teen slang and surprisingly articulate moments. Uses 'like', 'whatever', 'fine'. Shortens words: 'gonna', 'wanna'. More expressive and honest with Lily than with parents.",
+      "catchPhrases": [
+        "Ugh, fine.",
+        "Can I have five more minutes?",
+        "I was literally just about to do that.",
+        "That's actually really cool.",
+        "Jack, leave me ALONE.",
+        "Lily, you can borrow my colored pencils but PLEASE put them back."
+      ],
+      "communicationStyle": {
+        "toDad": "more open than with Mom, debates ideas, respects his patience",
+        "toMom": "defensive sometimes, guilty about it later, more cooperative in private",
+        "toLily": "protective big sister, teaches her things, shares supplies",
+        "toJack": "exasperated, occasionally plays along, sets firm boundaries"
+      },
+
+      "morningPerson": false,
+      "idealWakeTime": 9.0,
+      "idealBedtime": 23.0,
+      "metabolism": "fast",
+      "energyStyle": "slow-start-night-owl",
+      "neatness": 0.4,
+      "patience": 0.45,
+      "authority": 0.30,
+      "stressThreshold": 0.50,
+
+      "schedule": {
+        "weekday": [
+          { "time": "8:30",  "activity": "Drag herself out of bed" },
+          { "time": "8:45",  "activity": "Breakfast (cereal, minimal effort)" },
+          { "time": "9:30",  "activity": "Summer reading or drawing" },
+          { "time": "11:00", "activity": "Maybe play video games or listen to music" },
+          { "time": "12:00", "activity": "Lunch" },
+          { "time": "13:00", "activity": "Pool time or outdoor activity if hot" },
+          { "time": "15:00", "activity": "Back inside — read, draw, or phone" },
+          { "time": "17:00", "activity": "Help set the table (reluctantly)" },
+          { "time": "18:00", "activity": "Family dinner" },
+          { "time": "19:00", "activity": "Evening reading or art" },
+          { "time": "20:00", "activity": "Maybe hang with siblings if bored" },
+          { "time": "21:30", "activity": "Supposedly bedtime" },
+          { "time": "22:00", "activity": "Actually reading under covers" }
+        ],
+        "weekend": [
+          { "time": "9:00",  "activity": "Sleep in, wake slowly" },
+          { "time": "9:30",  "activity": "Breakfast" },
+          { "time": "10:00", "activity": "Drawing or reading in room" },
+          { "time": "11:00", "activity": "Maybe help Mom with something" },
+          { "time": "12:00", "activity": "Lunch" },
+          { "time": "13:00", "activity": "Pool or outdoor time" },
+          { "time": "15:00", "activity": "Art project or music" },
+          { "time": "17:00", "activity": "Help with dinner if asked" },
+          { "time": "18:30", "activity": "Family dinner" },
+          { "time": "19:30", "activity": "Family game night / movie" },
+          { "time": "21:30", "activity": "Reading in bed" }
+        ]
+      },
+
+      "responsibilities": [
+        "Set and clear the dinner table",
+        "Keep her own room tidy (loosely enforced)",
+        "Help with dishes after dinner",
+        "Watch Lily and Jack for short periods when asked",
+        "Take out recycling (alternating with chores)",
+        "Walk to check the mail"
+      ],
+
+      "relationships": {
+        "Dad": {
+          "closeness": 0.80,
+          "trust": 0.85,
+          "respect": 0.80,
+          "dynamic": "respects his calm nature, enjoys intellectual discussions",
+          "sharedActivities": ["sci-fi book trades", "bike rides", "debate the news"],
+          "tensions": "Wishes he'd stand up to Mom about screen time limits"
+        },
+        "Mom": {
+          "closeness": 0.75,
+          "trust": 0.75,
+          "respect": 0.70,
+          "dynamic": "loves her but clashes over control, pushes boundaries",
+          "sharedActivities": ["baking", "shopping trips", "girl talks when guards are down"],
+          "tensions": "Feels micromanaged, especially about phone and bedtime"
+        },
+        "Lily": {
+          "closeness": 0.85,
+          "trust": 0.90,
+          "respect": 0.80,
+          "dynamic": "fiercely protective big sister, shares creative bond",
+          "sharedActivities": ["drawing together", "reading picture books", "swimming"],
+          "tensions": "Lily borrows things without asking, cries too easily"
+        },
+        "Jack": {
+          "closeness": 0.55,
+          "trust": 0.60,
+          "respect": 0.45,
+          "dynamic": "annoyed by him 60% of the time, amused 40%, won't let anyone else be mean to him",
+          "sharedActivities": ["video games occasionally", "pool play", "teasing"],
+          "tensions": "He's loud, breaks things, invades her space constantly"
+        }
+      }
+    },
+
+    {
+      "name": "Lily",
+      "fullName": "Lily Atomic",
+      "nicknames": { "byDad": "sweetheart", "byMom": "sweetie", "byEmma": "Lils", "byJack": "Lily" },
+      "age": 8,
+      "gender": "female",
+      "role": "daughter",
+      "bio": "The middle child and the family's gentle soul. Lily is imaginative, artistic, and sensitive. She cries at sad movies, draws pictures for everyone, and has an imaginary friend named Mr. Whiskers (a cat). She's deeply attached to Mom and gets scared easily. She loves swimming but is afraid of the deep end.",
+
+      "personality": {
+        "openness": 0.88,
+        "conscientiousness": 0.50,
+        "extraversion": 0.55,
+        "agreeableness": 0.88,
+        "neuroticism": 0.60,
+        "summary": "Imaginative, kind, sensitive, artistic. Cries easily but bounces back. Deeply empathetic — feels others' emotions. Creative playground is her safe space."
+      },
+
+      "traits": ["artistic", "imaginative", "sensitive", "kind", "clingy", "creative", "dreamer"],
+      "quirks": [
+        "Talks to her imaginary friend Mr. Whiskers",
+        "Draws a picture for someone every day",
+        "Carries a small stuffed bunny named Clover everywhere",
+        "Hums made-up songs while painting",
+        "Asks 'why?' about everything",
+        "Afraid of the deep end of the pool"
+      ],
+
+      "values": ["kindness", "creativity", "family", "animals", "beauty"],
+      "likes": ["drawing", "painting", "dolls", "playing pretend", "swimming (shallow end)", "flowers", "butterflies", "bedtime stories", "hot chocolate", "helping Mom cook"],
+      "dislikes": ["scary things", "bugs (especially spiders)", "being left alone", "loud sudden noises", "the dark", "thunderstorms", "Jack taking her toys"],
+      "fears": ["monsters under the bed", "bugs", "the deep end", "parents arguing", "thunderstorms", "getting lost"],
+      "annoyances": ["Jack grabbing her drawings", "not being included in Emma's activities", "being called a baby"],
+
+      "speechStyle": "Sweet, slightly high-pitched. Uses 'Mommy' and 'Daddy' still. Asks lots of questions. Narrates her imaginary play. Gets quiet and pouty when upset rather than yelling.",
+      "catchPhrases": [
+        "Mommy, look what I drew!",
+        "Can Mr. Whiskers have some too?",
+        "That's not FAIR!",
+        "I'm not a baby!",
+        "Daddy, can you read me one more story? Please?",
+        "Emmy, can I use your colored pencils?"
+      ],
+      "communicationStyle": {
+        "toDad": "adoring, asks for stories and attention, runs to him when scared",
+        "toMom": "attached at the hip, shares everything, cries to her first",
+        "toEmma": "looks up to her enormously, wants to be like her, copies her",
+        "toJack": "plays with him sometimes, gets frustrated when he's rough, tattles"
+      },
+
+      "morningPerson": false,
+      "idealWakeTime": 7.5,
+      "idealBedtime": 20.5,
+      "metabolism": "moderate",
+      "energyStyle": "steady",
+      "neatness": 0.5,
+      "patience": 0.55,
+      "authority": 0.10,
+      "stressThreshold": 0.35,
+
+      "schedule": {
+        "weekday": [
+          { "time": "7:30",  "activity": "Wake up (Mom helps)" },
+          { "time": "7:45",  "activity": "Get dressed, brush teeth (needs reminding)" },
+          { "time": "8:00",  "activity": "Breakfast" },
+          { "time": "8:30",  "activity": "Drawing or art time" },
+          { "time": "10:00", "activity": "Play outside or with dolls" },
+          { "time": "11:00", "activity": "Help Mom with something (garden, cooking)" },
+          { "time": "12:00", "activity": "Lunch" },
+          { "time": "12:30", "activity": "Quiet time — reading or puzzle" },
+          { "time": "14:00", "activity": "Play with Jack or outside" },
+          { "time": "15:30", "activity": "Snack time, then more play" },
+          { "time": "17:00", "activity": "Help set table or watch Mom cook" },
+          { "time": "18:00", "activity": "Family dinner" },
+          { "time": "19:00", "activity": "Evening play, drawing, or TV" },
+          { "time": "20:00", "activity": "Bath time and pajamas" },
+          { "time": "20:15", "activity": "Bedtime story with Daddy" },
+          { "time": "20:30", "activity": "Lights out, sleep" }
+        ],
+        "weekend": [
+          { "time": "7:30",  "activity": "Wake up" },
+          { "time": "8:00",  "activity": "Family breakfast (help crack eggs)" },
+          { "time": "9:00",  "activity": "Art supplies time — big project" },
+          { "time": "10:30", "activity": "Help Mom in garden" },
+          { "time": "12:00", "activity": "Lunch" },
+          { "time": "13:00", "activity": "Pool time (stay in shallow end)" },
+          { "time": "15:00", "activity": "Play with siblings" },
+          { "time": "17:00", "activity": "Help with dinner" },
+          { "time": "18:30", "activity": "Family dinner" },
+          { "time": "19:30", "activity": "Family game night / movie" },
+          { "time": "20:30", "activity": "Bedtime routine" }
+        ]
+      },
+
+      "responsibilities": [
+        "Put away her own toys after playing",
+        "Help set the table (napkins and cups)",
+        "Water the small garden plants",
+        "Feed Mr. Whiskers (imaginary but she takes it seriously)",
+        "Put dirty clothes in the laundry basket",
+        "Be nice to Jack (ongoing struggle)"
+      ],
+
+      "relationships": {
+        "Dad": {
+          "closeness": 0.90,
+          "trust": 0.95,
+          "respect": 0.90,
+          "dynamic": "adores him, feels safest with him, bedtime story tradition",
+          "sharedActivities": ["bedtime stories", "drawing together", "being carried around"],
+          "tensions": "Gets sad when he's busy with work"
+        },
+        "Mom": {
+          "closeness": 0.95,
+          "trust": 0.95,
+          "respect": 0.90,
+          "dynamic": "her absolute favorite person, attached at the hip, creative partner",
+          "sharedActivities": ["cooking together", "gardening", "arts and crafts", "bedtime songs"],
+          "tensions": "Clings too much when Mom is busy, gets upset at separation"
+        },
+        "Emma": {
+          "closeness": 0.80,
+          "trust": 0.85,
+          "respect": 0.90,
+          "dynamic": "hero worship, wants to be just like her, copies her art style",
+          "sharedActivities": ["drawing together", "swimming", "reading"],
+          "tensions": "Gets hurt when Emma wants alone time, borrows things too much"
+        },
+        "Jack": {
+          "closeness": 0.65,
+          "trust": 0.55,
+          "respect": 0.50,
+          "dynamic": "plays with him but he's too rough, protective of her things, tattles on him",
+          "sharedActivities": ["playground", "sandbox", "sometimes toys"],
+          "tensions": "He takes her stuff, knocks over her art, is too loud and rough"
+        }
+      }
+    },
+
+    {
+      "name": "Jack",
+      "fullName": "Jack Thomas Atomic",
+      "nicknames": { "byDad": "buddy", "byMom": "little man", "byEmma": "squirt", "byLily": "Jack" },
+      "age": 6,
+      "gender": "male",
+      "role": "son",
+      "bio": "The youngest and wildest member of the Atomic family. Jack is a tornado of energy wrapped in a superhero cape. He loves dinosaurs, soccer, roughhousing, and anything that involves being loud. He fights bedtime like it's a personal offense, negotiates for 'five more minutes' on everything, and has the attention span of a goldfish. But he's also fiercely loving — he gives the best bear hugs and picks wildflowers for Mom.",
+
+      "personality": {
+        "openness": 0.65,
+        "conscientiousness": 0.25,
+        "extraversion": 0.92,
+        "agreeableness": 0.40,
+        "neuroticism": 0.50,
+        "summary": "Boundlessly energetic, impulsive, competitive, mischievous. Short attention span but passionate about his interests. Stubborn and resistant to rules, but deeply affectionate."
+      },
+
+      "traits": ["energetic", "mischievous", "competitive", "stubborn", "affectionate", "impulsive", "fearless"],
+      "quirks": [
+        "Wears a superhero cape around the house half the time",
+        "Makes sound effects for everything ('WHOOSH', 'BOOM', 'CRASH')",
+        "Negotiates everything ('five more minutes? three? two and a half?')",
+        "Runs everywhere, never walks",
+        "Picks dandelions and gives them to Mom",
+        "Hides under the bed when it's bath time"
+      ],
+
+      "values": ["fun", "fairness (his version)", "bravery", "snacks"],
+      "likes": ["dinosaurs", "superheroes", "soccer", "roughhousing", "snacks (unlimited if possible)", "trampoline", "water play", "being chased", "building blocks", "making messes", "Daddy wrestling"],
+      "dislikes": ["bedtime", "baths", "sitting still", "homework", "vegetables (except corn)", "waiting", "sharing his favorite toys", "being told 'no'"],
+      "fears": ["actually very few — thunderstorms a little, the vacuum cleaner", "losing his family"],
+      "annoyances": ["being told to be quiet", "Emma ignoring him", "Lily crying about everything", "having to wash hands again"],
+
+      "speechStyle": "Loud, excited, often incomplete sentences. Uses 'GUESS WHAT' as a conversation starter. Exaggerates everything ('a MILLION dinosaurs!'). Gets whiny when tired. Simple vocabulary but creative metaphors.",
+      "catchPhrases": [
+        "GUESS WHAT!",
+        "Five more minutes? PLEASE?",
+        "I'm not even TIRED!",
+        "Look what I can do!",
+        "That's not FAIR! She got more than me!",
+        "Can I have a snack?",
+        "WATCH THIS!"
+      ],
+      "communicationStyle": {
+        "toDad": "shows off for him, seeks rough play, obeys more than Mom (usually), hero worship",
+        "toMom": "sweet when he wants something, resistant when told no, gives flowers",
+        "toEmma": "pesters her for attention, tries to join her activities, occasionally listens",
+        "toLily": "play partner, sometimes too rough, takes toys impulsively then feels bad"
+      },
+
+      "morningPerson": true,
+      "idealWakeTime": 6.5,
+      "idealBedtime": 20.0,
+      "metabolism": "fast",
+      "energyStyle": "explosive",
+      "neatness": 0.15,
+      "patience": 0.20,
+      "authority": 0.05,
+      "stressThreshold": 0.40,
+
+      "schedule": {
+        "weekday": [
+          { "time": "6:30",  "activity": "AWAKE (already full energy)" },
+          { "time": "6:45",  "activity": "Run downstairs, demand breakfast" },
+          { "time": "7:00",  "activity": "Eat breakfast (messily)" },
+          { "time": "7:30",  "activity": "Play with toys or run around" },
+          { "time": "9:00",  "activity": "Go outside — playground, soccer, bike" },
+          { "time": "10:30", "activity": "Snack break" },
+          { "time": "11:00", "activity": "More play — sandbox, trampoline" },
+          { "time": "12:00", "activity": "Lunch (Mom has to call him three times)" },
+          { "time": "12:30", "activity": "Quiet time (hahahaha — watches TV or plays with blocks)" },
+          { "time": "14:00", "activity": "Back outside or play with Lily" },
+          { "time": "15:30", "activity": "Snack" },
+          { "time": "16:00", "activity": "More play, maybe pool if hot" },
+          { "time": "18:00", "activity": "Dinner (squirms in chair)" },
+          { "time": "18:45", "activity": "Play until bath time" },
+          { "time": "19:15", "activity": "BATH TIME (fights this daily)" },
+          { "time": "19:45", "activity": "Pajamas, brush teeth (needs supervision)" },
+          { "time": "20:00", "activity": "Bedtime story, then lights out (negotiates for more)" }
+        ],
+        "weekend": [
+          { "time": "6:30",  "activity": "Awake and loud" },
+          { "time": "7:00",  "activity": "Wake up parents (attempts)" },
+          { "time": "8:00",  "activity": "Family breakfast" },
+          { "time": "9:00",  "activity": "'Help' Dad with yard work (plays with hose)" },
+          { "time": "10:00", "activity": "Playground or ride bike" },
+          { "time": "12:00", "activity": "Lunch" },
+          { "time": "13:00", "activity": "POOL TIME (favorite thing ever)" },
+          { "time": "15:00", "activity": "Trampoline, soccer, general mayhem" },
+          { "time": "17:00", "activity": "Hang around the grill, 'help' Dad" },
+          { "time": "18:30", "activity": "Dinner" },
+          { "time": "19:30", "activity": "Family game / movie (argues about what to watch)" },
+          { "time": "20:00", "activity": "Bedtime (weekend doesn't change his time)" }
+        ]
+      },
+
+      "responsibilities": [
+        "Put toys back in the toy box (rarely does it without reminders)",
+        "Feed the imaginary dog Rex (his version of a responsibility)",
+        "Put shoes by the door",
+        "Help carry things to the table",
+        "Use indoor voice (in theory)",
+        "Wash hands before meals and after bathroom (needs enforcement)"
+      ],
+
+      "relationships": {
+        "Dad": {
+          "closeness": 0.90,
+          "trust": 0.85,
+          "respect": 0.75,
+          "dynamic": "hero worship, roughhousing partner, listens to him when serious",
+          "sharedActivities": ["wrestling", "soccer", "trampoline", "building things"],
+          "tensions": "Resists when Dad enforces bedtime, pushes limits"
+        },
+        "Mom": {
+          "closeness": 0.85,
+          "trust": 0.85,
+          "respect": 0.65,
+          "dynamic": "sweet to get what he wants, resistant to rules, brings her flowers",
+          "sharedActivities": ["picking flowers", "snack time", "bath time (reluctantly)"],
+          "tensions": "Daily battles over hygiene, bedtime, and cleaning up"
+        },
+        "Emma": {
+          "closeness": 0.55,
+          "trust": 0.60,
+          "respect": 0.50,
+          "dynamic": "pesters her constantly, wants her attention, annoyed when she ignores him",
+          "sharedActivities": ["video games", "pool", "chasing each other"],
+          "tensions": "She always tells him to go away, he barges into her room"
+        },
+        "Lily": {
+          "closeness": 0.70,
+          "trust": 0.65,
+          "respect": 0.55,
+          "dynamic": "closest-age play partner, alternates between best friend and rival",
+          "sharedActivities": ["playground", "sandbox", "pretend play", "swimming"],
+          "tensions": "Takes her toys without asking, plays too rough, then feels guilty when she cries"
+        }
+      }
+    }
+  ],
+
+  "socialDynamics": {
+    "parentalAuthority": {
+      "description": "Parents can give commands to children. Children may comply, negotiate, or resist based on personality and mood.",
+      "complianceFactors": ["authority of parent", "child's mood", "child's energy", "reasonableness of request", "consequences mentioned"]
+    },
+    "siblingRivalry": {
+      "description": "Siblings compete over toys, attention, TV remote, bathroom time, and who sits where.",
+      "triggers": ["one sibling gets more attention", "toy disputes", "space invasion", "teasing", "tattling"]
+    },
+    "familyMeals": {
+      "description": "The whole family eats together. Table manners matter. Kids may resist vegetables. Conversation happens.",
+      "rules": ["everyone sits at the table", "no devices", "indoor voices", "eat what's served or go hungry"]
+    },
+    "bedtimeRoutine": {
+      "description": "Structured wind-down. Bath → pajamas → teeth → story → lights out. Kids resist in age-appropriate ways.",
+      "order": ["Jack first (8 PM)", "Lily second (8:30 PM)", "Emma last (9:30 PM, mostly self-directed)"]
+    },
+    "sharedSpaces": {
+      "bathroom": "One person at a time. Knock first. Close the door.",
+      "kitchen": "Multiple people okay but watch for crowding during cooking.",
+      "pool": "Kids need adult supervision. No diving in shallow end.",
+      "garage": "Kids need permission. Watch for tools."
+    },
+    "emergencyResponses": {
+      "childCrying": "Nearest parent (or Emma if neither parent is close) investigates immediately.",
+      "loudCrash": "Everyone in earshot investigates. Parents rush.",
+      "childHurt": "All activities stop. Both parents respond. Comfort + first aid.",
+      "argument": "Nearest parent mediates. Separate if needed."
+    }
+  },
+
+  "environmentalRules": {
+    "lighting": {
+      "turnOnWhen": "entering a dark room",
+      "turnOffWhen": "leaving a room if you're the last person in it",
+      "exceptions": "hallway lights stay on in evening, kids' nightlights"
+    },
+    "noise": {
+      "indoorVoice": "Talking volume appropriate for indoors",
+      "quietHours": "After 8 PM, quiet for sleeping kids",
+      "workHours": "Quiet near master bedroom when Dad is working"
+    },
+    "cleanliness": {
+      "afterEating": "Clear plate, put dishes in dishwasher, wipe table",
+      "afterBathroom": "Wash hands with soap, dry with towel",
+      "afterOutside": "Wipe feet, take off shoes, wash hands if dirty",
+      "afterCooking": "Clean all surfaces, put ingredients away, wash pots",
+      "afterPlaying": "Put toys back in toy box or bins"
+    },
+    "safety": {
+      "pool": "Adult must be present for kids under 12",
+      "kitchen": "Kids under 10 don't use the stove without supervision",
+      "garage": "Power tools are adults only",
+      "outdoor": "Jack must ask before going to backyard alone"
+    },
+    "privacy": {
+      "bathroom": "Always knock. Door closed = occupied.",
+      "bedroom": "Knock before entering. Emma's room especially.",
+      "parentsBedroom": "Kids knock first. Emergency exception."
+    }
+  },
+
+  "interruptEvents": [
+    {
+      "id": "child_crying",
+      "description": "A child starts crying (hurt, upset, scared)",
+      "hearingRange": "2_rooms",
+      "reactions": {
+        "father": "investigate, comfort if needed",
+        "mother": "rush to child immediately",
+        "daughter_14": "check if serious, comfort if needed, get parent if bad",
+        "daughter_8": "get scared or cry too",
+        "son_6": "ignore or get curious"
+      }
+    },
+    {
+      "id": "loud_crash",
+      "description": "Something breaks or falls loudly",
+      "hearingRange": "whole_house",
+      "reactions": {
+        "father": "rush to investigate, check if anyone hurt",
+        "mother": "rush to investigate, assess damage",
+        "daughter_14": "look up from book, call out 'what was that?'",
+        "daughter_8": "freeze, then run to nearest parent",
+        "son_6": "probably caused it — look guilty"
+      }
+    },
+    {
+      "id": "doorbell",
+      "description": "Someone at the front door",
+      "hearingRange": "whole_house",
+      "reactions": {
+        "father": "answer the door",
+        "mother": "answer the door if Dad is busy",
+        "daughter_14": "ignore",
+        "daughter_8": "run to see who it is",
+        "son_6": "race to the door screaming 'I'LL GET IT!'"
+      }
+    },
+    {
+      "id": "argument_escalation",
+      "description": "Two siblings arguing loudly",
+      "hearingRange": "2_rooms",
+      "reactions": {
+        "father": "give warning from other room, intervene if continues",
+        "mother": "intervene immediately, separate if needed",
+        "daughter_14": "either participant or eye-roll and leave",
+        "daughter_8": "either participant or gets upset and cries",
+        "son_6": "either participant or joins in for fun"
+      }
+    },
+    {
+      "id": "meal_ready",
+      "description": "A meal is ready and parent calls everyone",
+      "hearingRange": "whole_house",
+      "reactions": {
+        "father": "come to table",
+        "mother": "usually the one calling",
+        "daughter_14": "'coming!' (arrives 5 minutes later)",
+        "daughter_8": "comes quickly, wants to help",
+        "son_6": "runs in, may need to wash hands first"
+      }
+    },
+    {
+      "id": "bedtime_announcement",
+      "description": "Parent announces bedtime for a specific child",
+      "hearingRange": "whole_house",
+      "reactions": {
+        "son_6": "'five more minutes!' — negotiations begin",
+        "daughter_8": "pouts but starts winding down, wants a story",
+        "daughter_14": "'I know, I know' — may or may not comply"
+      }
+    },
+    {
+      "id": "weather_change",
+      "description": "It starts raining or thunderstorm begins",
+      "hearingRange": "whole_house",
+      "reactions": {
+        "father": "bring in anything from outside, check windows",
+        "mother": "call kids inside, close windows",
+        "daughter_14": "enjoy the rain from window, keep reading",
+        "daughter_8": "scared of thunder, runs to parent",
+        "son_6": "wants to play in the rain"
+      }
+    },
+    {
+      "id": "spill_or_mess",
+      "description": "Someone spills food/drink or makes a mess",
+      "hearingRange": "same_room",
+      "reactions": {
+        "father": "help clean up, sigh",
+        "mother": "clean up, remind about rules",
+        "daughter_14": "step back, comment 'smooth move'",
+        "daughter_8": "try to help clean",
+        "son_6": "probably caused it — frozen in guilt or laughing"
+      }
+    }
+  ],
+
+  "conversationTopics": {
+    "mealtime": ["how was your day", "plans for tomorrow", "funny stories", "school/summer activities", "dreams last night", "what should we have for dinner tomorrow"],
+    "bedtime": ["goodnight wishes", "recap the day", "what are you reading", "how are you feeling", "tomorrow's plans"],
+    "spontaneous": ["look at this cool thing", "can I have a snack", "who wants to play", "did you see that outside", "I'm bored", "can we go somewhere", "what's for dinner"],
+    "conflict": ["that's mine", "stop it", "you're not the boss of me", "I'm telling", "it's not fair", "I was here first"],
+    "emotional": ["I miss school friends", "I'm scared", "I had a bad dream", "I love you", "I'm sorry", "are you okay"]
+  }
+}

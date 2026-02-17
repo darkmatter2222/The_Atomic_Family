@@ -53,7 +53,7 @@ const CATEGORY_ICONS = Object.fromEntries(
  * CharacterSprite - A billboard sprite that renders pixel art from JSON data.
  * Always faces the camera. Shows activity bubble when performing an interaction.
  */
-export default function CharacterSprite({ member, camera, onClick }) {
+export default function CharacterSprite({ member, camera, onClick, activeSpeech }) {
   const meshRef = useRef();
   const [currentTexture, setCurrentTexture] = useState(null);
 
@@ -169,6 +169,21 @@ export default function CharacterSprite({ member, camera, onClick }) {
 
       {/* Name label above sprite */}
       <NameLabel name={member.name} height={spriteHeight * scaleY / 2 + 0.15} />
+
+      {/* Speech bubble from agentic AI */}
+      {activeSpeech && (
+        <SpeechBubble
+          text={activeSpeech.text}
+          emotion={activeSpeech.emotion}
+          target={activeSpeech.target}
+          height={spriteHeight * scaleY / 2 + 0.65}
+        />
+      )}
+
+      {/* Thinking indicator when waiting for LLM */}
+      {member.state === 'thinking' && !activeSpeech && (
+        <ThinkingBubble height={spriteHeight * scaleY / 2 + 0.55} />
+      )}
 
       {/* Activity bubble (shows what the character is doing) */}
       {isPerforming && (
@@ -605,6 +620,157 @@ function makeTextTexture(text, size = 32) {
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   return tex;
+}
+
+/**
+ * SpeechBubble – floating speech text above a character when the agentic AI
+ * generates dialogue. Shows who they're talking to and their emotion.
+ */
+function SpeechBubble({ text, emotion, target, height }) {
+  const groupRef = useRef();
+
+  // Gentle float animation
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.position.y = height + Math.sin(Date.now() * 0.003) * 0.03;
+    }
+  });
+
+  const EMOTION_ICONS = {
+    happy: '😊', content: '😌', calm: '😐', neutral: '😐',
+    annoyed: '😤', angry: '😡', sad: '😢', tired: '😴',
+    excited: '🤩', worried: '😟', amused: '😄', firm: '😠',
+    loving: '🥰', playful: '😜', scared: '😨', proud: '🥲',
+  };
+
+  const emotionIcon = EMOTION_ICONS[emotion] || '💬';
+  const displayText = text.length > 40 ? text.slice(0, 37) + '...' : text;
+
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 320, 64);
+
+    // Speech bubble background — white with slight transparency
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 312, 48, 8);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 312, 48, 8);
+    ctx.stroke();
+
+    // Tail triangle
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.beginPath();
+    ctx.moveTo(150, 52);
+    ctx.lineTo(160, 62);
+    ctx.lineTo(170, 52);
+    ctx.fill();
+
+    // Emotion icon
+    ctx.font = '18px sans-serif';
+    ctx.fillText(emotionIcon, 10, 36);
+
+    // Speech text
+    ctx.font = 'bold 13px "Courier New"';
+    ctx.fillStyle = '#1a1a1a';
+    ctx.textAlign = 'left';
+    ctx.fillText(displayText, 34, 32);
+
+    // Target indicator (small, right-aligned)
+    if (target && target !== 'everyone') {
+      ctx.font = '10px "Courier New"';
+      ctx.fillStyle = '#888';
+      ctx.textAlign = 'right';
+      ctx.fillText(`→ ${target}`, 310, 16);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }, [displayText, emotionIcon, target]);
+
+  return (
+    <group ref={groupRef}>
+      <sprite position={[0, height, 0]} scale={[1.8, 0.36, 1]}>
+        <spriteMaterial map={texture} transparent depthTest={false} />
+      </sprite>
+    </group>
+  );
+}
+
+/**
+ * ThinkingBubble – animated thought indicator (💭 ...) when character is
+ * waiting for LLM reasoning.
+ */
+function ThinkingBubble({ height }) {
+  const groupRef = useRef();
+  const [dots, setDots] = useState(1);
+
+  // Animate thinking dots
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDots(d => (d % 3) + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.position.y = height + Math.sin(Date.now() * 0.004) * 0.05;
+    }
+  });
+
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 96, 48);
+
+    // Thought bubble background
+    ctx.fillStyle = 'rgba(180, 180, 220, 0.85)';
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 88, 32, 12);
+    ctx.fill();
+
+    // Small circles for thought bubble tail
+    ctx.fillStyle = 'rgba(180, 180, 220, 0.7)';
+    ctx.beginPath();
+    ctx.arc(42, 40, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(36, 46, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Thinking text: 💭 + dots
+    ctx.font = '16px sans-serif';
+    ctx.fillText('💭', 10, 28);
+    ctx.font = 'bold 18px "Courier New"';
+    ctx.fillStyle = '#444';
+    ctx.fillText('.'.repeat(dots), 38, 28);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }, [dots]);
+
+  return (
+    <group ref={groupRef}>
+      <sprite position={[0, height, 0]} scale={[0.6, 0.3, 1]}>
+        <spriteMaterial map={texture} transparent depthTest={false} />
+      </sprite>
+    </group>
+  );
 }
 
 function NameLabel({ name, height }) {

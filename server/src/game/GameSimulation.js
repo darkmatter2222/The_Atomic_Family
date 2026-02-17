@@ -8,8 +8,9 @@
  * The client is a passive renderer — it receives state and sends commands.
  */
 
-const { createFamily, updateFamilyMember, commandFamilyMember } = require('./FamilyMemberAI');
+const { createFamily, updateFamilyMember, commandFamilyMember, STATE } = require('./FamilyMemberAI');
 const { HOUSE_LAYOUT } = require('./HouseLayout');
+const AgenticEngine = require('./AgenticEngine');
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -40,6 +41,11 @@ class GameSimulation {
     HOUSE_LAYOUT.rooms.forEach(r => { this.roomLights[r.id] = true; });
     this.roomLights._exterior = true;
     this.lightsAuto = true;
+
+    // ── Agentic AI engine ──
+    this.agenticEngine = new AgenticEngine();
+    this.agenticEngine.initializePersonas(this.family);
+    this.agenticEngine.checkLLMAvailability();
 
     // ── Tick control ──
     this.tickRate = 10;                  // ticks per second
@@ -106,6 +112,9 @@ class GameSimulation {
       updateFamilyMember(member, dt, gameHour)
     );
 
+    // ── Agentic reasoning (async LLM decisions) ──
+    this._tickAgentic();
+
     // ── Auto lights (dusk/dawn) ──
     if (this.lightsAuto) {
       const shouldBeOn = gameHour >= 18 || gameHour < 6.5;
@@ -131,6 +140,7 @@ class GameSimulation {
       syncToReal: this.syncToReal,
       roomLights: this.roomLights,
       lightsAuto: this.lightsAuto,
+      agenticState: this.agenticEngine.serialize(),
     };
     this.io.volatile.emit('gameState', state);
   }
@@ -147,6 +157,7 @@ class GameSimulation {
       syncToReal: this.syncToReal,
       roomLights: this.roomLights,
       lightsAuto: this.lightsAuto,
+      agenticState: this.agenticEngine.serialize(),
     };
     socket.emit('gameState', state);
   }
@@ -248,6 +259,120 @@ class GameSimulation {
   /** Toggle auto-lights mode */
   toggleLightsAuto() {
     this.lightsAuto = !this.lightsAuto;
+  }
+
+  /** Enable/disable agentic AI */
+  setAgenticEnabled(enabled) {
+    this.agenticEngine.setEnabled(enabled);
+  }
+
+  /** Get agentic engine stats */
+  getAgenticStats() {
+    return this.agenticEngine.stats;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  Agentic reasoning integration
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Called every tick to manage agentic reasoning.
+   * Detects characters in CHOOSING state, transitions them to THINKING,
+   * and resolves pending LLM decisions.
+   */
+  _tickAgentic() {
+    // Let the engine evaluate who needs reasoning
+    const results = this.agenticEngine.tick(
+      this.family, this.gameTime, this.gameSpeed, this.roomLights
+    );
+
+    // Process immediate fallback decisions
+    for (const { memberName, decision, fallback } of results) {
+      if (fallback) {
+        // Let the regular AI handle it — just ensure state is CHOOSING
+        const idx = this.family.findIndex(m => m.name === memberName);
+        if (idx >= 0 && this.family[idx].state === 'thinking') {
+          this.family[idx] = { ...this.family[idx], state: 'choosing' };
+        }
+      }
+    }
+
+    // Transition CHOOSING → THINKING for members the engine is reasoning for
+    for (const member of this.family) {
+      if (member.state === 'choosing' && this.agenticEngine.hasPendingDecision(member.name)) {
+        const idx = this.family.findIndex(m => m.name === member.name);
+        if (idx >= 0) {
+          this.family[idx] = {
+            ...this.family[idx],
+            state: 'thinking',
+            activityLabel: '💭 Thinking...',
+            activityAnim: null,
+            _thinkingRealStart: Date.now(),
+          };
+        }
+      }
+    }
+
+    // Check for resolved decisions
+    for (const member of this.family) {
+      if (member.state !== 'thinking') continue;
+
+      const pending = this.agenticEngine.getPendingDecision(member.name);
+      if (!pending) {
+        // Decision has resolved — check what we got
+        const personaState = this.agenticEngine.getPersonaState(member.name);
+        const lastDecision = personaState?.lastDecision;
+
+        if (lastDecision && Date.now() - lastDecision.timestamp < 2000) {
+          // Apply the LLM decision via the command system
+          this.agenticEngine.applyDecision(
+            member.name, { action: lastDecision.interactionId, thought: lastDecision.reason, ...personaState },
+            this.family, this.roomLights
+          );
+
+          const idx = this.family.findIndex(m => m.name === member.name);
+          if (idx >= 0) {
+            this.family[idx] = commandFamilyMember(this.family[idx], lastDecision.interactionId);
+          }
+        } else {
+          // No decision came back — fallback to CHOOSING
+          const idx = this.family.findIndex(m => m.name === member.name);
+          if (idx >= 0) {
+            this.family[idx] = { ...this.family[idx], state: 'choosing' };
+          }
+        }
+      } else {
+        // Still pending — attach the resolution handler if not already done
+        if (!member._decisionHandlerAttached) {
+          const memberName = member.name;
+          pending.then(decision => {
+            if (decision && decision.valid) {
+              // Apply the decision
+              this.agenticEngine.applyDecision(
+                memberName, decision, this.family, this.roomLights
+              );
+
+              const idx = this.family.findIndex(m => m.name === memberName);
+              if (idx >= 0 && this.family[idx].state === 'thinking') {
+                this.family[idx] = commandFamilyMember(this.family[idx], decision.action);
+              }
+            } else {
+              // Invalid or null — fallback to random CHOOSING
+              const idx = this.family.findIndex(m => m.name === memberName);
+              if (idx >= 0 && this.family[idx].state === 'thinking') {
+                this.family[idx] = { ...this.family[idx], state: 'choosing' };
+              }
+            }
+          });
+
+          // Mark that we attached the handler (using mutable state, since _tickAgentic owns this)
+          const idx = this.family.findIndex(m => m.name === member.name);
+          if (idx >= 0) {
+            this.family[idx]._decisionHandlerAttached = true;
+          }
+        }
+      }
+    }
   }
 }
 

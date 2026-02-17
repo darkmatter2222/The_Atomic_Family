@@ -45,7 +45,8 @@ const STATE = {
   IDLE: 'idle',
   WALKING: 'walking',
   CHOOSING: 'choosing',
-  PERFORMING: 'performing'
+  PERFORMING: 'performing',
+  THINKING: 'thinking'
 };
 
 /**
@@ -438,6 +439,28 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
       updated.activityAnim = null;
       if (updated.idleTimer >= updated.idleDuration) {
         updated.state = STATE.CHOOSING;
+      }
+      break;
+    }
+
+    case STATE.THINKING: {
+      // Waiting for AgenticEngine LLM decision.
+      // GameSimulation._tickAgentic() handles transitions out of this state.
+      // Show a thinking indicator.
+      updated.animFrame = 0;
+      if (!updated.activityLabel || !updated.activityLabel.includes('Thinking')) {
+        updated.activityLabel = '💭 Thinking...';
+      }
+      updated.activityAnim = null;
+
+      // Safety timeout: if stuck in THINKING for >15 real seconds,
+      // fall back to CHOOSING. (Real-time timeout is also managed in
+      // AgenticEngine, but this is a safety net.)
+      if (updated._thinkingRealStart && Date.now() - updated._thinkingRealStart > 15000) {
+        updated.state = STATE.CHOOSING;
+        updated._thinkingRealStart = null;
+        updated._decisionHandlerAttached = false;
+        updated.activityLabel = null;
       }
       break;
     }

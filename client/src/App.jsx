@@ -7,6 +7,7 @@ import House3D from './components/House3D';
 import CharacterSprite from './components/CharacterSprite';
 import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
+import ConversationViewer from './components/ConversationViewer';
 import { HOUSE_LAYOUT } from './game/HouseLayout';
 
 /* ════════════════════════════════════════════════════════════════
@@ -198,7 +199,7 @@ function CompassIndicators() {
  * PASSIVE RENDERER: receives family state from the server via props.
  * No local AI logic — the server is the source of truth.
  */
-function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, roomLights, gameTime, firstPerson, family }) {
+function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, onGroundClick, selectedPlayerName, onFamilyUpdate, visibility, roomLights, gameTime, firstPerson, family, activeSpeech }) {
 
   // Notify parent of family updates so sidebar can live-track selected player
   useEffect(() => {
@@ -217,9 +218,12 @@ function GameScene({ onRoomHover, onFurnitureHover, onPlayerClick, onRoomClick, 
       <House3D onRoomHover={onRoomHover} onFurnitureHover={onFurnitureHover} onRoomClick={onRoomClick} onGroundClick={onGroundClick} visibility={visibility} roomLights={roomLights} firstPerson={firstPerson} />
 
       {/* Family Members */}
-      {family.map(member => (
-        <CharacterSprite key={member.name} member={member} onClick={onPlayerClick} />
-      ))}
+      {family.map(member => {
+        const speech = activeSpeech?.find(s => s.speaker === member.name);
+        return (
+          <CharacterSprite key={member.name} member={member} onClick={onPlayerClick} activeSpeech={speech || null} />
+        );
+      })}
     </>
   );
 }
@@ -372,6 +376,10 @@ export default function App() {
   });
   const [lightsAuto, setLightsAuto] = useState(true);
 
+  // Agentic AI state — conversations, persona data, speech
+  const [agenticState, setAgenticState] = useState(null);
+  const [showConversations, setShowConversations] = useState(false);
+
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
     function onGameState(state) {
@@ -382,6 +390,7 @@ export default function App() {
       if (state.syncToReal !== undefined) { setSyncToReal(state.syncToReal); syncToRealRef.current = state.syncToReal; }
       if (state.roomLights) setRoomLights(state.roomLights);
       if (state.lightsAuto !== undefined) setLightsAuto(state.lightsAuto);
+      if (state.agenticState) setAgenticState(state.agenticState);
     }
     socket.on('gameState', onGameState);
     return () => { socket.off('gameState', onGameState); };
@@ -501,6 +510,18 @@ export default function App() {
     socket.emit('command', { memberName, interactionId });
   }, []);
 
+  // Agentic AI controls
+  const handleToggleAgentic = useCallback(() => {
+    const newState = !agenticState?.enabled;
+    socket.emit('setAgenticEnabled', newState);
+  }, [agenticState?.enabled]);
+  const handleToggleConversations = useCallback(() => setShowConversations(p => !p), []);
+
+  // Extract active speech for rendering bubbles — memoized
+  const activeSpeech = useMemo(() => {
+    return agenticState?.social?.activeSpeech || [];
+  }, [agenticState?.social?.activeSpeech]);
+
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
       {/* Title overlay with hamburger super menu */}
@@ -589,6 +610,7 @@ export default function App() {
           gameTime={gameTime}
           firstPerson={firstPerson}
           family={family}
+          activeSpeech={activeSpeech}
         />
         {firstPerson ? (
           <FirstPersonController
@@ -668,6 +690,74 @@ export default function App() {
           autoCycleInterval={autoCycleInterval}
           autoCycleIntervals={AUTO_CYCLE_INTERVALS}
           onSetAutoCycleInterval={setAutoCycleInterval}
+        />
+      )}
+
+      {/* Agentic AI toggle button (bottom-left) */}
+      <div style={{
+        position: 'absolute',
+        bottom: showConversations ? 450 : 20,
+        left: 20,
+        zIndex: 20,
+        display: 'flex',
+        gap: 6,
+        transition: 'bottom 0.25s ease',
+      }}>
+        <button
+          onClick={handleToggleAgentic}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 6,
+            fontFamily: '"Courier New", monospace',
+            fontSize: 11,
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            background: agenticState?.enabled ? 'rgba(76,175,80,0.2)' : 'rgba(0,0,0,0.6)',
+            border: agenticState?.enabled ? '1px solid rgba(76,175,80,0.5)' : '1px solid rgba(255,255,255,0.15)',
+            color: agenticState?.enabled ? '#4CAF50' : '#888',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          🤖 AI {agenticState?.enabled ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={handleToggleConversations}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 6,
+            fontFamily: '"Courier New", monospace',
+            fontSize: 11,
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            background: showConversations ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.6)',
+            border: showConversations ? '1px solid rgba(255,215,0,0.4)' : '1px solid rgba(255,255,255,0.15)',
+            color: showConversations ? '#FFD700' : '#888',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          🗣️ Chat
+        </button>
+        {agenticState?.llmAvailable === false && agenticState?.enabled && (
+          <span style={{
+            padding: '6px 10px',
+            borderRadius: 6,
+            fontSize: 10,
+            background: 'rgba(244,67,54,0.15)',
+            border: '1px solid rgba(244,67,54,0.3)',
+            color: '#F44336',
+            fontFamily: '"Courier New", monospace',
+          }}>
+            ⚠ LLM Offline
+          </span>
+        )}
+      </div>
+
+      {/* Conversation Viewer */}
+      {showConversations && (
+        <ConversationViewer
+          agenticState={agenticState}
+          selectedCharacter={selectedPlayerName}
+          onClose={handleToggleConversations}
         />
       )}
 
