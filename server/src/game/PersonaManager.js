@@ -20,11 +20,49 @@ for (const member of personaData.members) {
   PERSONA_MAP[member.name] = member;
 }
 
+// ── Reverse name/alias lookup (nicknames, full names → canonical name) ──
+const NAME_ALIASES = {};
+for (const member of personaData.members) {
+  const canonical = member.name;
+  NAME_ALIASES[canonical.toLowerCase()] = canonical;
+  if (member.fullName) {
+    NAME_ALIASES[member.fullName.toLowerCase()] = canonical;
+    const firstName = member.fullName.split(' ')[0].toLowerCase();
+    if (firstName !== canonical.toLowerCase()) {
+      NAME_ALIASES[firstName] = canonical;
+    }
+  }
+  if (member.nicknames) {
+    for (const nick of Object.values(member.nicknames)) {
+      NAME_ALIASES[nick.toLowerCase()] = canonical;
+    }
+  }
+}
+
 const FAMILY_DATA = personaData.family;
 const SOCIAL_DYNAMICS = personaData.socialDynamics;
 const ENVIRONMENT_RULES = personaData.environmentalRules;
 const INTERRUPT_EVENTS = personaData.interruptEvents;
 const CONVERSATION_TOPICS = personaData.conversationTopics;
+
+/**
+ * Resolve a character name, alias, or nickname to the canonical name.
+ * Handles: full names ("David Atomic"), nicknames ("Daddy", "Mommy"),
+ * first names ("Sarah"), and canonical names ("Dad").
+ * @returns {string|null} Canonical name or null if no match.
+ */
+function resolveCharacterName(name) {
+  if (!name) return null;
+  if (PERSONA_MAP[name]) return name;
+  const resolved = NAME_ALIASES[name.toLowerCase().trim()];
+  if (resolved) return resolved;
+  // Fuzzy: check if input contains a known alias
+  const lower = name.toLowerCase().trim();
+  for (const [alias, canonical] of Object.entries(NAME_ALIASES)) {
+    if (lower.includes(alias) && alias.length >= 3) return canonical;
+  }
+  return null;
+}
 
 /**
  * Get the static persona for a character.
@@ -275,6 +313,7 @@ function serializePersonaState(personaState) {
 module.exports = {
   getPersona,
   getAllPersonaNames,
+  resolveCharacterName,
   createPersonaState,
   addMemory,
   addConversation,

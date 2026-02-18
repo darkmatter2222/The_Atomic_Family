@@ -54,10 +54,12 @@ IMPORTANT BEHAVIORAL RULES:
 - Consider your needs, schedule, time of day, and who's around.
 - Respect social norms: don't enter an occupied bathroom, don't mow the lawn at night, use indoor voices.
 - If someone spoke to you recently, acknowledge it in your decision.
-- You are aware of the room you're in and can only see people in the same room.
+- You can ONLY see and talk to people in the SAME room as you. Do not address people in other rooms.
+- If you want to talk to someone in another room, walk there first (pick an action in their room).
 - ${persona.age < 10 ? 'You need adult supervision for swimming and the kitchen stove.' : ''}
 - ${persona.role === 'father' || persona.role === 'mother' ? 'You are a parent with authority. Monitor kids\' safety and enforce rules.' : ''}
-- Turn off lights when you leave a room if you are the last person.`;
+- Turn off lights when you leave a room if you are the last person.
+- Don't repeat yourself. Vary your activities and speech.`;
 }
 
 /**
@@ -110,11 +112,17 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
     ? `Current: ${schedule.current.activity}${schedule.next ? ` | Next: ${schedule.next.time} — ${schedule.next.activity}` : ''}`
     : 'No schedule entry.';
 
-  // Format interactions as numbered list
+  // Format interactions as numbered list (IDs only, no numbering in the value)
   const interactionList = availableInteractions
     .slice(0, 20) // limit to 20 options for smaller model
     .map((ia, i) => `${i + 1}. ${ia.id} — ${ia.label} (${ia.category}, ${ia.duration.min}-${ia.duration.max}min)`)
     .join('\n');
+
+  // Build anti-repetition context
+  const recentActions = personaState.recentInteractions?.slice(-3) || [];
+  const recentActionsStr = recentActions.length > 0
+    ? `Recent actions: ${recentActions.join(', ')} — TRY SOMETHING DIFFERENT!`
+    : '';
 
   return `## Current Situation
 TIME: ${dayStr}, ${timeStr} (${perception.environment.timeOfDay})
@@ -144,6 +152,7 @@ ${memories}
 
 ## Recent Conversations
 ${conversations}
+${recentActionsStr}
 
 ${buildConversationResponseSection(conversationContext)}
 
@@ -157,32 +166,37 @@ ${getTimeUrgencyHints(perception.environment.hour, schedule, member.needs)}
 ${interactionList}
 
 ## Instructions
-Decide what to do next. Think carefully and deeply about:
+Decide what to do next. Think carefully:
 1. Your most pressing needs (eat if hungry, sleep if tired, bathroom if urgent)
-2. The current time — be very conscious of how much time you have before your next scheduled activity
+2. The current time — be conscious of how much time you have before your next scheduled activity
 3. How long the activity will take — don't start a 30min task if dinner is in 10 minutes
 4. Your plan for the day — what have you done, what's next on your agenda?
-5. Social context — who's around, what they're doing, should you interact?
-6. Recent conversations — RESPOND to people who spoke to you! If someone said something to you, your reply is the HIGHEST priority.
-7. Should you say something to someone nearby? Be social and expressive! Have real conversations.
-8. Should you turn on/off the light in this room?
+5. Social context — who's around, what they're doing
+6. Recent conversations — RESPOND to people who spoke to you! This is your HIGHEST priority.
+7. Should you say something to someone nearby? Be social and expressive!
 
-CONVERSATION RULES:
-- If someone just spoke TO you, you MUST reply with speech directed at them. This is your #1 priority!
-- When you speak, always set speechTarget to the NAME of the person you're talking to.
-- Don't talk to people who aren't in the same room as you.
+CRITICAL CONVERSATION RULES:
+- You can ONLY talk to people who are listed in "People here" above. They must be IN YOUR ROOM.
+- Do NOT talk to people who are not in the same room. You cannot see or hear them.
+- If someone just spoke TO you (see Active Conversation above), you MUST reply with speech directed at them.
+- Set speechTarget to the exact NAME of the person (e.g., "Dad", "Mom", "Emma", "Lily", "Jack").
 - Have natural back-and-forth conversations — ask follow-up questions, react to what was said.
-- Express your personality through how you speak — your speech style matters!
+- If nobody is in the room with you, set speech to null.
+- Express your personality through how you speak!
 
-Be autonomous and proactive. Don't just repeat the same activities. Explore your personality.
-Express yourself through speech regularly — comment on what you're doing, ask questions, make observations.
+LIGHT RULES:
+- Set lightAction to "on" ONLY if the room is dark and you need light.
+- Set lightAction to "off" ONLY if you are the last person leaving the room.
+- Otherwise set lightAction to null (leave lights as they are).
+
+VARIETY: Don't repeat the same action or speech you just did. Try different activities!
 
 Respond with ONLY this JSON (no other text):
 {
   "thought": "2-3 sentence internal reasoning about your decision",
-  "action": "interaction_id from the list above",
-  "speech": "what you say out loud (be expressive!), or null",
-  "speechTarget": "name of person you're addressing, or null",
+  "action": "interaction_id from the list above (JUST the id, not the number)",
+  "speech": "what you say out loud, or null if silent",
+  "speechTarget": "name of person you're addressing (must be in your room), or null",
   "emotion": "current emotion word",
   "lightAction": "on" or "off" or null
 }`;
@@ -196,7 +210,7 @@ function buildConversationResponseSection(conversationContext) {
   if (!conversationContext) return '';
 
   return `## ⚠️ ACTIVE CONVERSATION — YOU MUST REPLY!
-${conversationContext.from} just spoke to you! You are in a conversation with them.
+${conversationContext.from} just spoke to you! You are in a face-to-face conversation with them in the same room.
 
 CONVERSATION SO FAR (turn ${conversationContext.turnNumber}):
 ${conversationContext.fullThread}
@@ -204,9 +218,11 @@ ${conversationContext.fullThread}
 ${conversationContext.from} said: "${conversationContext.lastText}" (${conversationContext.lastEmotion})
 
 → You MUST set "speech" to your reply to ${conversationContext.from}.
-→ You MUST set "speechTarget" to "${conversationContext.from}".
+→ You MUST set "speechTarget" to "${conversationContext.from}" (exactly this name).
 → Your reply should be natural and in-character. React to what they said!
-→ You can still pick an action — maybe continue what you're doing, or change based on the conversation.`;
+→ Keep replies concise — 1-2 sentences, like real conversation.
+→ If you want to end the conversation, say goodbye or farewell.
+→ You can still pick an action — maybe continue what you were doing, or change activity.`;
 }
 
 /**
@@ -258,6 +274,8 @@ function formatNeeds(needs) {
 /**
  * Parse the LLM response into a structured decision.
  * Handles malformed JSON gracefully.
+ * Fixes: strips numeric prefixes ("12. sit_on_couch" → "sit_on_couch"),
+ *        handles numeric-only actions (index into available list).
  */
 function parseDecision(rawResponse, availableInteractions) {
   if (!rawResponse) return null;
@@ -275,8 +293,33 @@ function parseDecision(rawResponse, availableInteractions) {
 
     const parsed = JSON.parse(jsonStr);
 
+    // ── Robust action ID parsing ──
+    let actionId = parsed.action;
+
+    if (actionId != null) {
+      actionId = String(actionId).trim();
+
+      // Strip numeric prefix like "12. sit_on_couch" → "sit_on_couch"
+      actionId = actionId.replace(/^\d+\.\s*/, '');
+
+      // Strip surrounding quotes
+      actionId = actionId.replace(/^["']|["']$/g, '');
+
+      // If it's purely a number, treat as 1-based index into available interactions
+      if (/^\d+$/.test(actionId)) {
+        const idx = parseInt(actionId, 10) - 1;
+        if (idx >= 0 && idx < availableInteractions.length) {
+          actionId = availableInteractions[idx].id;
+        }
+      }
+
+      // Strip any description suffix (e.g., "sit_on_couch — Sit on the couch")
+      if (actionId.includes(' — ') || actionId.includes(' - ')) {
+        actionId = actionId.split(/\s[—-]\s/)[0].trim();
+      }
+    }
+
     // Validate the action is a real interaction
-    const actionId = parsed.action;
     const validAction = availableInteractions.some(i => i.id === actionId);
 
     return {
@@ -367,10 +410,16 @@ function buildAgendaPrompt(member, gameTime, personaState) {
     weekday: 'long',
     timeZone: 'America/New_York'
   });
+  const timeStr = gameTime.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York'
+  });
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
   const isWeekend = schedule?.isWeekend || false;
 
-  return `It's the start of a new day: ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
+  return `Good morning! It's ${timeStr} on ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
 
 As ${persona.fullName} (${persona.age} years old, ${persona.role}), plan out your day.
 Think about:

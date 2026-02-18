@@ -23,6 +23,7 @@ const {
   addConversation,
   getPersona,
   getNickname,
+  resolveCharacterName,
   SOCIAL_DYNAMICS,
   INTERRUPT_EVENTS,
 } = require('./PersonaManager');
@@ -32,9 +33,9 @@ const logger = require('./SimulationLogger');
 
 const MAX_GLOBAL_LOG = 200;       // Global conversation log limit
 const SPEECH_DISPLAY_MS = 6000;   // How long speech bubbles last
-const MAX_THREAD_TURNS = 8;       // Max back-and-forth turns per thread
+const MAX_THREAD_TURNS = 6;       // Max back-and-forth turns per thread
 const THREAD_TIMEOUT_MS = 60000;  // Thread expires after 60s of no activity
-const THREAD_RESPONSE_WINDOW_MS = 15000; // How long to wait for a reply
+const THREAD_RESPONSE_WINDOW_MS = 30000; // How long to wait for a reply (30s)
 const MAX_ACTIVE_THREADS = 10;    // Max concurrent threads
 const INTERRUPT_COOLDOWN_MS = 10000; // Min time between interrupts to same person
 
@@ -76,8 +77,33 @@ class SocialEngine {
   processSpeech(speakerName, targetName, text, emotion, room, personaStates, family) {
     if (!text || text.trim().length === 0) return {};
 
+    // ── Resolve target name (LLM may use nicknames like "Daddy" or "Jack Thomas Atomic") ──
+    if (targetName && targetName !== 'everyone' && targetName !== 'room') {
+      const resolved = resolveCharacterName(targetName);
+      if (resolved) {
+        targetName = resolved;
+      } else {
+        // Unknown target — treat as room-wide speech
+        logger.logEvent({
+          type: 'unknown_target',
+          message: `${speakerName} tried to speak to unknown "${targetName}", treating as room speech`,
+          data: { speaker: speakerName, target: targetName, room },
+        });
+        targetName = 'everyone';
+      }
+    }
+
+    // Self-targeting guard — can't talk to yourself
+    if (targetName === speakerName) {
+      targetName = 'everyone';
+    }
+
     const timestamp = Date.now();
     const speechType = this._classifySpeechType(text, speakerName);
+
+    // Get speaker position for logging
+    const speakerMember = family?.find(m => m.name === speakerName);
+    const targetMember = family?.find(m => m.name === targetName);
 
     const entry = {
       id: `speech_${timestamp}_${speakerName}`,
@@ -94,76 +120,148 @@ class SocialEngine {
     let thread = null;
     let interrupt = null;
 
+    // ── Detect farewell phrases — end existing threads ──
+    const isFarewell = this._isFarewell(text);
+
     // ── Check if this is a reply to an existing thread ──
     const speakerState = this.characterConvState[speakerName];
-    if (speakerState?.pendingReply && targetName) {
+    if (speakerState?.pendingReply && targetName && targetName !== 'everyone') {
       const existingThread = this.threads.get(speakerState.pendingReply.threadId);
       if (existingThread && existingThread.isActive() &&
-          (existingThread.participants.includes(targetName) || existingThread.participants.includes(speakerName))) {
-        // This is a reply in an existing conversation
-        thread = existingThread;
-        thread.addTurn(speakerName, text, emotion);
-        entry.threadId = thread.id;
+          existingThread.participants.includes(speakerName)) {
+        // Verify the reply target is actually in the thread
+        const threadTarget = existingThread.participants.find(p => p !== speakerName);
+        if (threadTarget === targetName || existingThread.participants.includes(targetName)) {
+          // ── Check if participants are still in the same room ──
+          if (!this._areInSameRoom(speakerName, threadTarget, family)) {
+            // They've moved apart — end the thread
+            existingThread.endedManually = true;
+            speakerState.pendingReply = null;
+            speakerState.activeThreadId = null;
+            logger.logConversation({
+              conversationId: existingThread.id,
+              action: 'ended',
+              speaker: speakerName,
+              target: threadTarget,
+              text: '(moved apart)',
+              emotion: 'neutral',
+              room,
+              turnNumber: existingThread.turns.length,
+              threadLength: existingThread.turns.length,
+              speakerPosition: speakerMember?.position,
+            });
+          } else {
+            // This is a valid reply in an existing conversation
+            thread = existingThread;
+            thread.addTurn(speakerName, text, emotion);
+            entry.threadId = thread.id;
 
-        // Clear the pending reply
-        speakerState.pendingReply = null;
+            // Clear the pending reply for speaker
+            speakerState.pendingReply = null;
 
-        // Now the OTHER person needs to reply (if thread isn't over)
-        if (!thread.isOver()) {
-          const otherParticipant = thread.participants.find(p => p !== speakerName);
-          if (otherParticipant && this.characterConvState[otherParticipant]) {
-            this.characterConvState[otherParticipant].pendingReply = {
-              threadId: thread.id,
-              from: speakerName,
+            // If farewell, end the thread
+            if (isFarewell) {
+              thread.endedManually = true;
+              speakerState.activeThreadId = null;
+              // Clear the other participant's state too
+              const otherState = this.characterConvState[threadTarget];
+              if (otherState) {
+                otherState.pendingReply = null;
+                otherState.activeThreadId = null;
+              }
+              logger.logConversation({
+                conversationId: thread.id,
+                action: 'ended',
+                speaker: speakerName,
+                target: threadTarget,
+                text: '(farewell)',
+                emotion,
+                room,
+                turnNumber: thread.turns.length,
+                threadLength: thread.turns.length,
+                speakerPosition: speakerMember?.position,
+              });
+            } else if (!thread.isOver()) {
+              // Now the OTHER person needs to reply
+              // BUT: Don't force-interrupt — let them respond naturally
+              if (this.characterConvState[threadTarget]) {
+                this.characterConvState[threadTarget].pendingReply = {
+                  threadId: thread.id,
+                  from: speakerName,
+                  text: text.trim(),
+                  emotion,
+                  timestamp,
+                  forceInterrupt: false,  // Subsequent turns: no forced interrupt
+                  _alreadyForced: false,
+                };
+                this.characterConvState[threadTarget].activeThreadId = thread.id;
+              }
+            }
+
+            logger.logConversation({
+              conversationId: thread.id,
+              action: 'reply',
+              speaker: speakerName,
+              target: threadTarget,
               text: text.trim(),
               emotion,
-              timestamp,
-            };
-            this.characterConvState[otherParticipant].activeThreadId = thread.id;
+              room,
+              turnNumber: thread.turns.length,
+              threadLength: thread.turns.length,
+              speakerPosition: speakerMember?.position,
+            });
           }
         }
-
-        logger.logConversation({
-          conversationId: thread.id,
-          action: 'reply',
-          speaker: speakerName,
-          target: targetName,
-          text: text.trim(),
-          emotion,
-          room,
-          turnNumber: thread.turns.length,
-          threadLength: thread.turns.length,
-        });
       }
     }
 
-    // ── If not a reply, start a new thread (if target is a specific person) ──
+    // ── If not a reply, start a new thread (if target is in the SAME ROOM) ──
     if (!thread && targetName && targetName !== 'everyone' && targetName !== 'room') {
-      thread = this._startThread(speakerName, targetName, text, emotion, room);
-      entry.threadId = thread.id;
+      // CRITICAL: Only start conversation threads with people in the same room
+      if (!this._areInSameRoom(speakerName, targetName, family)) {
+        // Cross-room speech — log it but don't create a thread
+        logger.logEvent({
+          type: 'cross_room_speech',
+          message: `${speakerName} tried to talk to ${targetName} from another room — blocked`,
+          data: { speaker: speakerName, target: targetName, speakerRoom: room,
+                  targetRoom: targetMember?.currentRoom || 'unknown' },
+        });
+        // Convert to announcement instead
+        targetName = 'everyone';
+        entry.target = 'everyone';
+        entry.type = 'shout';
+      } else {
+        thread = this._startThread(speakerName, targetName, text, emotion, room);
+        entry.threadId = thread.id;
 
-      // Flag the target to respond
-      if (this.characterConvState[targetName]) {
-        this.characterConvState[targetName].pendingReply = {
-          threadId: thread.id,
-          from: speakerName,
-          text: text.trim(),
-          emotion,
-          timestamp,
-        };
-        this.characterConvState[targetName].activeThreadId = thread.id;
+        // Flag the target to respond with force-interrupt (first turn of new conversation)
+        if (this.characterConvState[targetName]) {
+          this.characterConvState[targetName].pendingReply = {
+            threadId: thread.id,
+            from: speakerName,
+            text: text.trim(),
+            emotion,
+            timestamp,
+            forceInterrupt: true,   // First turn: force interrupt
+            _alreadyForced: false,
+          };
+          this.characterConvState[targetName].activeThreadId = thread.id;
+        }
+
+        // Check if this should interrupt the target
+        interrupt = this._checkInterrupt(speakerName, targetName, text, speechType, room, family);
       }
-
-      // Check if this should interrupt the target
-      interrupt = this._checkInterrupt(speakerName, targetName, text, speechType, room, family);
     }
 
     // ── Room-wide speech — everyone in the room "hears" it ──
     if (!targetName || targetName === 'everyone' || targetName === 'room') {
       const hearers = this._getCharactersInRoom(room, family, speakerName);
-      for (const hearer of hearers) {
-        if (personaStates[hearer]) {
-          addConversation(personaStates[hearer], speakerName, 'everyone', text, emotion);
+      // Only process if someone is actually in the room
+      if (hearers.length > 0) {
+        for (const hearer of hearers) {
+          if (personaStates[hearer]) {
+            addConversation(personaStates[hearer], speakerName, 'everyone', text, emotion);
+          }
         }
       }
     }
@@ -188,7 +286,7 @@ class SocialEngine {
       expiresAt: timestamp + SPEECH_DISPLAY_MS,
     });
 
-    // Log the speech
+    // Log the speech with positions
     logger.logSpeech({
       speaker: speakerName,
       target: targetName || 'everyone',
@@ -197,6 +295,8 @@ class SocialEngine {
       room,
       speechType,
       conversationId: thread ? thread.id : null,
+      speakerPosition: speakerMember?.position,
+      targetPosition: targetMember?.position,
     });
 
     return { entry, thread, interrupt };
@@ -331,8 +431,12 @@ class SocialEngine {
   }
 
   /**
-   * Get which characters need to respond to a conversation this tick.
+   * Get which characters need to be force-interrupted to respond to a conversation.
    * Called from AgenticEngine to force characters into CHOOSING state.
+   *
+   * IMPORTANT: Only returns characters for the FIRST turn of a new conversation
+   * (forceInterrupt === true). Subsequent turns are handled naturally when the
+   * character enters CHOOSING on their own. This eliminates interrupt spam.
    *
    * @returns {Array<{name, reason, threadId, from, text}>}
    */
@@ -343,17 +447,8 @@ class SocialEngine {
     for (const [name, state] of Object.entries(this.characterConvState)) {
       if (!state.pendingReply) continue;
 
-      if (now - state.pendingReply.timestamp < THREAD_RESPONSE_WINDOW_MS) {
-        result.push({
-          name,
-          reason: `respond to ${state.pendingReply.from}`,
-          threadId: state.pendingReply.threadId,
-          from: state.pendingReply.from,
-          text: state.pendingReply.text,
-          emotion: state.pendingReply.emotion,
-        });
-      } else {
-        // Timed out waiting for response
+      // Timeout ALL pending replies (including non-forced ones)
+      if (now - state.pendingReply.timestamp >= THREAD_RESPONSE_WINDOW_MS) {
         const thread = this.threads.get(state.pendingReply.threadId);
         if (thread) {
           thread.timedOut = true;
@@ -362,7 +457,7 @@ class SocialEngine {
             action: 'ended',
             speaker: name,
             target: state.pendingReply.from,
-            text: '(no response)',
+            text: '(no response — timed out)',
             emotion: 'neutral',
             room: thread.room,
             turnNumber: thread.turns.length,
@@ -371,10 +466,41 @@ class SocialEngine {
         }
         state.pendingReply = null;
         state.activeThreadId = null;
+        continue;
       }
+
+      // Only force-interrupt for new conversation starts (forceInterrupt === true)
+      // and only once per pending reply (_alreadyForced guard)
+      if (!state.pendingReply.forceInterrupt) continue;
+      if (state.pendingReply._alreadyForced) continue;
+
+      // NOTE: Do NOT set _alreadyForced here — AgenticEngine sets it
+      // only after the interrupt is actually applied (character was interruptible).
+      // This allows retry on next tick if the character was in choosing/thinking.
+
+      result.push({
+        name,
+        reason: `respond to ${state.pendingReply.from}`,
+        threadId: state.pendingReply.threadId,
+        from: state.pendingReply.from,
+        text: state.pendingReply.text,
+        emotion: state.pendingReply.emotion,
+      });
     }
 
     return result;
+  }
+
+  /**
+   * Mark a force-interrupt as consumed (called by AgenticEngine after
+   * successfully interrupting the character into CHOOSING).
+   * Prevents the same interrupt from being returned again.
+   */
+  markForceConsumed(name) {
+    const state = this.characterConvState[name];
+    if (state?.pendingReply) {
+      state.pendingReply._alreadyForced = true;
+    }
   }
 
   /**
@@ -546,27 +672,60 @@ class SocialEngine {
   }
 
   /**
-   * Classify the type of speech for UI rendering.
+   * Classify the type of speech for UI rendering and interrupt logic.
    */
   _classifySpeechType(text, speakerName) {
-    const lower = text.toLowerCase();
+    const lower = text.toLowerCase().trim();
     const persona = getPersona(speakerName);
     const isParent = persona?.role === 'father' || persona?.role === 'mother';
 
+    // Commands (imperative)
+    if (isParent && (lower.includes('come here') || lower.includes('come downstairs') ||
+        lower.includes('dinner') || lower.includes('time to') || lower.includes('bedtime') ||
+        lower.includes('wash') || lower.includes('clean') || lower.includes('homework') ||
+        lower.includes('right now') || lower.includes('immediately'))) {
+      return 'command';
+    }
     if (lower.includes('!') && (lower.includes('stop') || lower.includes('no') || lower.includes('enough'))) {
       return 'command';
     }
-    if (isParent && (lower.includes('come here') || lower.includes('come downstairs') ||
-        lower.includes('dinner') || lower.includes('time to') || lower.includes('bedtime') ||
-        lower.includes('wash') || lower.includes('clean') || lower.includes('homework'))) {
-      return 'command';
-    }
-    if (lower.endsWith('?') || lower.includes('?')) return 'question';
-    if (lower.includes('!') && lower === lower.toUpperCase() && lower.length > 3) return 'yell';
-    if (lower.includes('love') || lower.includes('hug') || lower.includes('thank') || lower.includes('proud')) return 'affection';
-    if (lower.includes('sorry') || lower.includes('apologize')) return 'apology';
-    if (lower.includes('not fair') || lower.includes('why do I') || lower.includes('stupid') || lower.includes('boring')) return 'complaint';
+
+    // Yelling (ALL CAPS + exclamation)
+    if (lower.includes('!') && text === text.toUpperCase() && text.length > 3) return 'yell';
+
+    // Questions
+    if (lower.endsWith('?') || (lower.includes('?') && !lower.includes('!'))) return 'question';
+
+    // Affection
+    if (lower.includes('love you') || lower.includes('hug') || lower.includes('thank') || lower.includes('proud of')) return 'affection';
+
+    // Apology
+    if (lower.includes('sorry') || lower.includes('apologize') || lower.includes('my bad')) return 'apology';
+
+    // Complaint
+    if (lower.includes('not fair') || lower.includes('why do i') || lower.includes('stupid') || lower.includes('boring') || lower.includes('i don\'t want')) return 'complaint';
+
+    // Farewell
+    if (this._isFarewell(text)) return 'farewell';
+
+    // Greeting
+    if (lower.match(/^(hey|hi|hello|morning|good morning|good evening|what's up)/)) return 'greeting';
+
     return 'statement';
+  }
+
+  /**
+   * Detect farewell/goodbye phrases that should end a conversation.
+   */
+  _isFarewell(text) {
+    const lower = text.toLowerCase().trim();
+    const farewellPhrases = [
+      'bye', 'goodbye', 'good bye', 'see you', 'gotta go', 'talk later',
+      'nice talking', 'catch you later', 'later!', 'goodnight', 'good night',
+      'nighty night', 'sweet dreams', 'sleep well', 'take care',
+      'i\'m heading', 'i should go', 'anyway, i', 'well, i\'m off',
+    ];
+    return farewellPhrases.some(p => lower.includes(p));
   }
 
   /**

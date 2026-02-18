@@ -29,6 +29,7 @@ const {
   recordDecision,
   serializePersonaState,
   getAllPersonaNames,
+  resolveCharacterName,
   PERSONA_MAP,
 } = require('./PersonaManager');
 const {
@@ -162,12 +163,14 @@ class AgenticEngine {
 
     // ── Conversation interrupts: force characters who were just spoken to
     //    into CHOOSING so they can reply through the LLM ──
+    //    GUARD: Only interrupt IDLE, PERFORMING, or WALKING characters.
+    //    Skip characters already in CHOOSING or THINKING (prevents spam).
     const needingResponse = this.socialEngine.getCharactersNeedingResponse();
     for (const resp of needingResponse) {
       const member = family.find(m => m.name === resp.name);
       if (!member) continue;
 
-      // If the character is performing or walking, interrupt them
+      // Only interrupt if the character is NOT already handling a decision
       if (member.state === 'performing' || member.state === 'walking' || member.state === 'idle') {
         const idx = family.indexOf(member);
         if (idx >= 0) {
@@ -182,16 +185,26 @@ class AgenticEngine {
             pathIndex: 0,
           };
 
+          // Clear rate limit so reasoning starts IMMEDIATELY this tick
+          // (prevents regular AI CHOOSING handler from intercepting)
+          this.lastReasoningTime[resp.name] = 0;
+
+          // Mark force-interrupt as consumed so it's not retried
+          this.socialEngine.markForceConsumed(resp.name);
+
           logger.logStateTransition({
             character: resp.name,
             from: member.state,
             to: 'choosing',
-            reason: `Interrupted to respond to ${resp.from}: "${resp.text}"`,
+            reason: `Interrupted to respond to ${resp.from}: "${resp.text.substring(0, 60)}"`,
             conversationId: resp.threadId,
             triggerSpeaker: resp.from,
+            position: member.position,
           });
         }
       }
+      // If choosing/thinking: don't mark as consumed — retry next tick
+      // when the current reasoning cycle finishes
     }
 
     // Generate daily agendas if needed
@@ -258,22 +271,31 @@ class AgenticEngine {
       if (decision.speech) {
         const member = family.find(m => m.name === memberName);
         const room = member?.currentRoom || 'unknown';
+
+        // Resolve speech target name (LLM may use nicknames)
+        let resolvedTarget = decision.speechTarget;
+        if (resolvedTarget) {
+          resolvedTarget = resolveCharacterName(resolvedTarget) || resolvedTarget;
+        }
+
         personaState.pendingSpeech = {
           text: decision.speech,
-          target: decision.speechTarget,
+          target: resolvedTarget,
           emotion: decision.emotion || 'neutral',
           timestamp: Date.now(),
         };
         // Pass family so SocialEngine can check room proximity for interrupts
         const result = this.socialEngine.processSpeech(
-          memberName, decision.speechTarget, decision.speech,
+          memberName, resolvedTarget, decision.speech,
           decision.emotion, room, this.personaStates, family
         );
-        // Mark that the speaker has responded (clears unanswered calls)
-        this.socialEngine.markResponded(memberName);
       } else {
         personaState.pendingSpeech = null;
       }
+
+      // Always mark responded to clear pending conversation state
+      // (even if no speech was generated — prevents pendingReply from persisting)
+      this.socialEngine.markResponded(memberName);
 
       // Handle light actions
       if (decision.lightAction && roomLights) {
@@ -292,6 +314,9 @@ class AgenticEngine {
 
       personaState.mood = decision.emotion || personaState.mood;
       this.stats.llmDecisions++;
+    } else {
+      // No valid decision — also clear pending conversation state
+      this.socialEngine.markResponded(memberName);
     }
 
     this.stats.totalDecisions++;
@@ -406,9 +431,11 @@ class AgenticEngine {
       const agenda = this.agendas[member.name];
       if (!agenda) continue;
 
-      // Generate agenda if: new day or no agenda yet (between 5-8 AM or first time ever)
-      const needsAgenda = !agenda.generatedForDay ||
-        (agenda.generatedForDay !== dayKey && hour >= 5 && hour < 8);
+      // Only generate agendas between 5-8 AM
+      if (hour < 5 || hour >= 8) continue;
+
+      // Generate agenda if: new day AND we haven't generated for this day yet
+      const needsAgenda = !agenda.generatedForDay || agenda.generatedForDay !== dayKey;
 
       if (needsAgenda) {
         this._agendaGenerating = true;

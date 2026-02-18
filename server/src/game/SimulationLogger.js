@@ -66,7 +66,7 @@ class SimulationLogger {
   /**
    * Log a speech act (character speaking).
    */
-  logSpeech({ speaker, target, text, emotion, room, speechType, conversationId }) {
+  logSpeech({ speaker, target, text, emotion, room, speechType, conversationId, speakerPosition, targetPosition }) {
     this._write({
       event: 'speech',
       speaker,
@@ -76,13 +76,15 @@ class SimulationLogger {
       room,
       speechType,
       conversationId: conversationId || null,
+      speakerPos: speakerPosition ? { x: Math.round(speakerPosition.x * 10) / 10, z: Math.round(speakerPosition.z * 10) / 10 } : null,
+      targetPos: targetPosition ? { x: Math.round(targetPosition.x * 10) / 10, z: Math.round(targetPosition.z * 10) / 10 } : null,
     });
   }
 
   /**
    * Log a conversation thread event (new thread, reply, thread ended).
    */
-  logConversation({ conversationId, action, speaker, target, text, emotion, room, turnNumber, threadLength }) {
+  logConversation({ conversationId, action, speaker, target, text, emotion, room, turnNumber, threadLength, speakerPosition }) {
     this._write({
       event: 'conversation',
       conversationId,
@@ -94,6 +96,7 @@ class SimulationLogger {
       room,
       turnNumber,
       threadLength,
+      speakerPos: speakerPosition ? { x: Math.round(speakerPosition.x * 10) / 10, z: Math.round(speakerPosition.z * 10) / 10 } : null,
     });
   }
 
@@ -115,7 +118,7 @@ class SimulationLogger {
   /**
    * Log a character state transition driven by social context.
    */
-  logStateTransition({ character, from, to, reason, conversationId, triggerSpeaker }) {
+  logStateTransition({ character, from, to, reason, conversationId, triggerSpeaker, position }) {
     this._write({
       event: 'state_transition',
       character,
@@ -124,6 +127,7 @@ class SimulationLogger {
       reason,
       conversationId: conversationId || null,
       triggerSpeaker: triggerSpeaker || null,
+      position: position ? { x: Math.round(position.x * 10) / 10, z: Math.round(position.z * 10) / 10 } : null,
     });
   }
 

@@ -419,6 +419,8 @@ class GameSimulation {
         // No valid decision — return to CHOOSING for regular AI fallback
         this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
         this.agenticEngine.stats.fallbackDecisions++;
+        // Clear conversation state so we don't keep retrying failed responses
+        this.agenticEngine.socialEngine.markResponded(member.name);
       }
     }
   }
