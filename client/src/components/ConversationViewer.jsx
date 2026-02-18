@@ -53,7 +53,7 @@ const TABS = [
   { id: 'stats',    label: '📊 Stats' },
 ];
 
-export default function ConversationViewer({ agenticState, selectedCharacter, onClose, onThoughtClick }) {
+export default function ConversationViewer({ agenticState, selectedCharacter, onClose, onThoughtClick, onConversationClick }) {
   const [activeTab, setActiveTab] = useState('timeline');
   const [filter, setFilter] = useState('all');
   const [showThoughts, setShowThoughts] = useState(true);
@@ -118,6 +118,7 @@ export default function ConversationViewer({ agenticState, selectedCharacter, on
             showThoughts={showThoughts}
             setShowThoughts={setShowThoughts}
             onThoughtClick={onThoughtClick}
+            onConversationClick={onConversationClick}
           />
         )}
         {activeTab === 'agendas' && (
@@ -251,7 +252,7 @@ function MoodBar({ personas, filter, setFilter }) {
  *  Timeline Tab
  * ════════════════════════════════════════════════════════════════ */
 
-function TimelineTab({ social, personas, thoughtSummaries, filter, showThoughts, setShowThoughts, onThoughtClick }) {
+function TimelineTab({ social, personas, thoughtSummaries, filter, showThoughts, setShowThoughts, onThoughtClick, onConversationClick }) {
   const scrollRef = useRef(null);
   const prevLen = useRef(0);
 
@@ -269,6 +270,7 @@ function TimelineTab({ social, personas, thoughtSummaries, filter, showThoughts,
         text: conv.text,
         emotion: conv.emotion,
         speechType: conv.type || 'statement',
+        threadId: conv.threadId || null,
       });
     }
 
@@ -357,7 +359,13 @@ function TimelineTab({ social, personas, thoughtSummaries, filter, showThoughts,
           </div>
         ) : (
           timeline.map((item, i) => {
-            if (item.type === 'speech') return <SpeechEntry key={`s-${i}`} item={item} />;
+            if (item.type === 'speech') return (
+              <SpeechEntry
+                key={`s-${i}`}
+                item={item}
+                onClick={() => onConversationClick && item.threadId && onConversationClick(item.threadId)}
+              />
+            );
             if (item.type === 'thought') return (
               <ThoughtEntry
                 key={`t-${item.thoughtId || i}`}
@@ -550,27 +558,37 @@ function StatsTab({ stats, personas }) {
  *  Timeline Entry Components
  * ════════════════════════════════════════════════════════════════ */
 
-function SpeechEntry({ item }) {
+function SpeechEntry({ item, onClick }) {
   const nameColor = ROLE_COLORS[item.speaker] || '#aaa';
   const typeStyle = SPEECH_TYPE_STYLES[item.speechType] || SPEECH_TYPE_STYLES.statement;
   const emotionIcon = EMOTION_ICONS[item.emotion] || '';
   const timeStr = new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const isClickable = !!onClick && !!item.threadId;
 
   return (
-    <div style={{
-      marginBottom: 5,
-      padding: '5px 8px',
-      borderRadius: 5,
-      background: typeStyle.bg,
-      border: `1px solid ${typeStyle.border}`,
-    }}>
+    <div
+      onClick={isClickable ? onClick : undefined}
+      style={{
+        marginBottom: 5,
+        padding: '5px 8px',
+        borderRadius: 5,
+        background: typeStyle.bg,
+        border: `1px solid ${typeStyle.border}`,
+        cursor: isClickable ? 'pointer' : 'default',
+        transition: 'background 0.1s ease',
+      }}
+      onMouseEnter={isClickable ? (e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; } : undefined}
+      onMouseLeave={isClickable ? (e) => { e.currentTarget.style.background = typeStyle.bg; } : undefined}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
         <span style={{ fontSize: 10 }}>{typeStyle.icon}</span>
         <span style={{ color: nameColor, fontWeight: 'bold', fontSize: 10 }}>{item.speaker}</span>
         <span style={{ color: '#555', fontSize: 9 }}>→</span>
         <span style={{ color: ROLE_COLORS[item.target] || '#888', fontSize: 10 }}>{item.target}</span>
+        {item.threadId && <span style={{ fontSize: 8, color: '#4FC3F7', marginLeft: 2 }}>🔗</span>}
         {emotionIcon && <span style={{ marginLeft: 'auto', fontSize: 11 }}>{emotionIcon}</span>}
         <span style={{ color: '#444', fontSize: 8, marginLeft: emotionIcon ? 4 : 'auto' }}>{timeStr}</span>
+        {isClickable && <span style={{ fontSize: 8, color: '#FFD700' }}>🔍</span>}
       </div>
       <div style={{ color: '#ddd', fontSize: 11, lineHeight: 1.3, paddingLeft: 2 }}>
         &ldquo;{item.text}&rdquo;

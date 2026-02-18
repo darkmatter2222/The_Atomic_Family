@@ -21,6 +21,7 @@
 
 const LLMClient = require('./LLMClient');
 const SocialEngine = require('./SocialEngine');
+const logger = require('./SimulationLogger');
 const {
   createPersonaState,
   addMemory,
@@ -116,6 +117,8 @@ class AgenticEngine {
       this.tokenHistory[member.name] = [];
       this.tokenTotals[member.name] = 0;
     }
+    // Initialize SocialEngine per-character conversation state
+    this.socialEngine.initializeCharacters(family);
     console.log(`[AgenticEngine] Initialized ${family.length} persona states`);
   }
 
@@ -156,6 +159,40 @@ class AgenticEngine {
     this.recentEvents = this.recentEvents.filter(e =>
       Date.now() - e.timestamp < 60000
     );
+
+    // ── Conversation interrupts: force characters who were just spoken to
+    //    into CHOOSING so they can reply through the LLM ──
+    const needingResponse = this.socialEngine.getCharactersNeedingResponse();
+    for (const resp of needingResponse) {
+      const member = family.find(m => m.name === resp.name);
+      if (!member) continue;
+
+      // If the character is performing or walking, interrupt them
+      if (member.state === 'performing' || member.state === 'walking' || member.state === 'idle') {
+        const idx = family.indexOf(member);
+        if (idx >= 0) {
+          // Force into CHOOSING so the next reasoning cycle picks up the conversation
+          family[idx] = {
+            ...member,
+            state: 'choosing',
+            activityLabel: `💬 Responding to ${resp.from}...`,
+            interactionTimer: 0,
+            currentInteraction: null,
+            path: null,
+            pathIndex: 0,
+          };
+
+          logger.logStateTransition({
+            character: resp.name,
+            from: member.state,
+            to: 'choosing',
+            reason: `Interrupted to respond to ${resp.from}: "${resp.text}"`,
+            conversationId: resp.threadId,
+            triggerSpeaker: resp.from,
+          });
+        }
+      }
+    }
 
     // Generate daily agendas if needed
     this._checkAgendas(family, gameTime, gameSpeed, roomLights);
@@ -227,10 +264,13 @@ class AgenticEngine {
           emotion: decision.emotion || 'neutral',
           timestamp: Date.now(),
         };
-        this.socialEngine.processSpeech(
+        // Pass family so SocialEngine can check room proximity for interrupts
+        const result = this.socialEngine.processSpeech(
           memberName, decision.speechTarget, decision.speech,
-          decision.emotion, room, this.personaStates
+          decision.emotion, room, this.personaStates, family
         );
+        // Mark that the speaker has responded (clears unanswered calls)
+        this.socialEngine.markResponded(memberName);
       } else {
         personaState.pendingSpeech = null;
       }
@@ -269,10 +309,11 @@ class AgenticEngine {
     if (!personaState) return;
 
     const agenda = this.agendas[name];
+    const conversationContext = this.socialEngine.getConversationContext(name);
     const systemPrompt = buildSystemPrompt(name);
     const userPrompt = buildUserPrompt(
       member, family, gameTime, roomLights,
-      personaState, this.recentEvents, agenda
+      personaState, this.recentEvents, agenda, conversationContext
     );
 
     const perception = buildPerception(member, family, gameTime, roomLights, this.recentEvents);
@@ -297,6 +338,7 @@ class AgenticEngine {
 
       if (!rawResponse) {
         this._logThought(name, thoughtId, systemPrompt, userPrompt, null, null, elapsed, 0);
+        logger.logLLMCall({ character: name, type: 'decision', systemPrompt, userPrompt, rawResponse: null, parsedDecision: null, elapsed, tokens: 0, valid: false, error: 'No response' });
         console.log(`[AgenticEngine] No response for ${name} (${elapsed}ms)`);
         return null;
       }
@@ -305,6 +347,20 @@ class AgenticEngine {
 
       // Log full thought chain
       this._logThought(name, thoughtId, systemPrompt, userPrompt, rawResponse, decision, elapsed, totalTokens);
+
+      // Log to rolling file
+      logger.logLLMCall({
+        character: name,
+        type: 'decision',
+        systemPrompt,
+        userPrompt,
+        rawResponse,
+        parsedDecision: decision,
+        elapsed,
+        tokens: totalTokens,
+        valid: decision?.valid || false,
+        error: null,
+      });
 
       if (decision && decision.valid) {
         console.log(`[AgenticEngine] ${name} decided: ${decision.action} ("${decision.thought}") [${elapsed}ms] [~${totalTokens} tok]`);
@@ -320,6 +376,7 @@ class AgenticEngine {
       console.error(`[AgenticEngine] LLM error for ${name}: ${err.message}`);
       this.stats.llmErrors++;
       this._logThought(name, thoughtId, systemPrompt, userPrompt, `ERROR: ${err.message}`, null, Date.now() - startTime, 0);
+      logger.logLLMCall({ character: name, type: 'decision', systemPrompt, userPrompt, rawResponse: `ERROR: ${err.message}`, parsedDecision: null, elapsed: Date.now() - startTime, tokens: 0, valid: false, error: err.message });
       return null;
     }).then(decision => {
       this.resolvedDecisions.set(name, decision);
@@ -393,12 +450,23 @@ class AgenticEngine {
         };
         addMemory(personaState, 'thought', `Made a plan for today: ${plan.map(p => p.activity).join(', ')}`, 4);
         console.log(`[AgenticEngine] ${member.name} planned their day: ${plan.length} items`);
+
+        logger.logAgenda({
+          character: member.name,
+          plan,
+          raw: rawResponse,
+          elapsed,
+          tokens,
+          error: null,
+        });
       }
 
       this._logThought(member.name, this.nextThoughtId++, systemPrompt, agendaPrompt, rawResponse, { type: 'agenda', plan }, elapsed, tokens);
+      logger.logLLMCall({ character: member.name, type: 'agenda', systemPrompt, userPrompt: agendaPrompt, rawResponse, parsedDecision: { type: 'agenda', plan }, elapsed, tokens, valid: !!plan, error: null });
 
     } catch (err) {
       console.error(`[AgenticEngine] Agenda generation error for ${member.name}: ${err.message}`);
+      logger.logLLMCall({ character: member.name, type: 'agenda', systemPrompt: '', userPrompt: '', rawResponse: '', parsedDecision: null, elapsed: 0, tokens: 0, valid: false, error: err.message });
     }
   }
 

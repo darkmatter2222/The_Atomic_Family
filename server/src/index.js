@@ -112,6 +112,16 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Conversation thread detail (for clicking on speech entries) ──
+  socket.on('getConversationThread', (threadId, callback) => {
+    if (typeof callback === 'function') {
+      const thread = simulation.agenticEngine
+        ? simulation.agenticEngine.socialEngine.getThreadById(threadId)
+        : null;
+      callback(thread);
+    }
+  });
+
   // ── Thought chain / dashboard data ──
   socket.on('getThoughtDetail', (thoughtId, callback) => {
     if (typeof callback === 'function') {

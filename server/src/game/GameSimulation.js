@@ -108,6 +108,7 @@ class GameSimulation {
     const gameHour = this.gameTime.getHours() + this.gameTime.getMinutes() / 60;
 
     // ── Agentic reasoning FIRST — intercepts CHOOSING before regular AI picks randomly ──
+    //    Also handles conversation interrupts (forces addressed characters into CHOOSING)
     this._tickAgentic();
 
     // ── Update each family member ──
@@ -359,6 +360,7 @@ class GameSimulation {
    */
   _tickAgentic() {
     // Get decisions/fallbacks from the engine tick
+    // NOTE: engine.tick() may modify this.family members directly (for conversation interrupts)
     const results = this.agenticEngine.tick(
       this.family, this.gameTime, this.gameSpeed, this.roomLights
     );

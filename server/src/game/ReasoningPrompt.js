@@ -64,7 +64,7 @@ IMPORTANT BEHAVIORAL RULES:
  * Build the user prompt — current situation and available actions.
  * This changes every reasoning cycle.
  */
-function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState, recentEvents = [], agenda = null) {
+function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState, recentEvents = [], agenda = null, conversationContext = null) {
   const persona = getPersona(member.name);
   const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents);
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
@@ -145,6 +145,8 @@ ${memories}
 ## Recent Conversations
 ${conversations}
 
+${buildConversationResponseSection(conversationContext)}
+
 ${buildAgendaSection(agenda, gameTime)}
 
 ## Time Awareness
@@ -161,9 +163,16 @@ Decide what to do next. Think carefully and deeply about:
 3. How long the activity will take — don't start a 30min task if dinner is in 10 minutes
 4. Your plan for the day — what have you done, what's next on your agenda?
 5. Social context — who's around, what they're doing, should you interact?
-6. Recent conversations — respond to people who spoke to you
-7. Should you say something to someone nearby? Be social and expressive!
+6. Recent conversations — RESPOND to people who spoke to you! If someone said something to you, your reply is the HIGHEST priority.
+7. Should you say something to someone nearby? Be social and expressive! Have real conversations.
 8. Should you turn on/off the light in this room?
+
+CONVERSATION RULES:
+- If someone just spoke TO you, you MUST reply with speech directed at them. This is your #1 priority!
+- When you speak, always set speechTarget to the NAME of the person you're talking to.
+- Don't talk to people who aren't in the same room as you.
+- Have natural back-and-forth conversations — ask follow-up questions, react to what was said.
+- Express your personality through how you speak — your speech style matters!
 
 Be autonomous and proactive. Don't just repeat the same activities. Explore your personality.
 Express yourself through speech regularly — comment on what you're doing, ask questions, make observations.
@@ -177,6 +186,27 @@ Respond with ONLY this JSON (no other text):
   "emotion": "current emotion word",
   "lightAction": "on" or "off" or null
 }`;
+}
+
+/**
+ * Build a section for the user prompt when the character needs to
+ * reply to an active conversation. This creates the two-way dialogue.
+ */
+function buildConversationResponseSection(conversationContext) {
+  if (!conversationContext) return '';
+
+  return `## ⚠️ ACTIVE CONVERSATION — YOU MUST REPLY!
+${conversationContext.from} just spoke to you! You are in a conversation with them.
+
+CONVERSATION SO FAR (turn ${conversationContext.turnNumber}):
+${conversationContext.fullThread}
+
+${conversationContext.from} said: "${conversationContext.lastText}" (${conversationContext.lastEmotion})
+
+→ You MUST set "speech" to your reply to ${conversationContext.from}.
+→ You MUST set "speechTarget" to "${conversationContext.from}".
+→ Your reply should be natural and in-character. React to what they said!
+→ You can still pick an action — maybe continue what you're doing, or change based on the conversation.`;
 }
 
 /**

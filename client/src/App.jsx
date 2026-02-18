@@ -9,6 +9,7 @@ import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
 import ConversationViewer from './components/ConversationViewer';
 import ThoughtDetailModal from './components/ThoughtDetailModal';
+import ConversationDetailModal from './components/ConversationDetailModal';
 import { HOUSE_LAYOUT } from './game/HouseLayout';
 
 /* ════════════════════════════════════════════════════════════════
@@ -381,6 +382,7 @@ export default function App() {
   const [agenticState, setAgenticState] = useState(null);
   const [showConversations, setShowConversations] = useState(false);
   const [selectedThought, setSelectedThought] = useState(null);
+  const [selectedConversation, setSelectedConversation] = useState(null);
 
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
@@ -524,6 +526,12 @@ export default function App() {
     });
   }, []);
   const handleCloseThoughtModal = useCallback(() => setSelectedThought(null), []);
+  const handleConversationClick = useCallback((threadId) => {
+    socket.emit('getConversationThread', threadId, (thread) => {
+      if (thread) setSelectedConversation(thread);
+    });
+  }, []);
+  const handleCloseConversationModal = useCallback(() => setSelectedConversation(null), []);
 
   // Extract active speech for rendering bubbles — memoized
   const activeSpeech = useMemo(() => {
@@ -767,6 +775,7 @@ export default function App() {
           selectedCharacter={selectedPlayerName}
           onClose={handleToggleConversations}
           onThoughtClick={handleThoughtClick}
+          onConversationClick={handleConversationClick}
         />
       )}
 
@@ -775,6 +784,14 @@ export default function App() {
         <ThoughtDetailModal
           thought={selectedThought}
           onClose={handleCloseThoughtModal}
+        />
+      )}
+
+      {/* Conversation Detail Modal */}
+      {selectedConversation && (
+        <ConversationDetailModal
+          thread={selectedConversation}
+          onClose={handleCloseConversationModal}
         />
       )}
 
