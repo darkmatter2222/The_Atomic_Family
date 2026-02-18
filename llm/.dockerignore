@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.log
+nohup.out
+dl.py
+download_model.py

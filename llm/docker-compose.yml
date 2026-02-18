@@ -1,0 +1,34 @@
+# Atomic Family LLM — Docker Compose
+# Deploy: docker compose up -d --build
+# Port 8001 externally → 8000 inside container (8000 is used by Portainer)
+
+services:
+  llm:
+    build: .
+    container_name: atomic-family-llm
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - LLM_MODEL=Qwen/Qwen2.5-3B-Instruct
+      - LLM_PORT=8000
+      - LLM_MAX_MODEL_LEN=4096
+      - LLM_GPU_MEMORY=0.85
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+volumes:
+  huggingface-cache:
