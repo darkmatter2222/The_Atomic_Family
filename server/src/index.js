@@ -112,6 +112,25 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Thought chain / dashboard data ──
+  socket.on('getThoughtDetail', (thoughtId, callback) => {
+    if (typeof callback === 'function') {
+      const thought = simulation.agenticEngine
+        ? simulation.agenticEngine.getThoughtById(thoughtId)
+        : null;
+      callback(thought);
+    }
+  });
+
+  socket.on('getThoughtTimeline', ({ characterName, limit }, callback) => {
+    if (typeof callback === 'function') {
+      const thoughts = simulation.agenticEngine
+        ? simulation.agenticEngine.getRecentThoughts(characterName, limit || 30)
+        : [];
+      callback(thoughts);
+    }
+  });
+
   // ── Legacy: requestGameState (backwards compat) ──
   socket.on('requestGameState', () => {
     simulation.sendFullState(socket);

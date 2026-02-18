@@ -15,7 +15,7 @@ const https = require('https');
 const LLM_HOST    = process.env.LLM_HOST || process.env.SSH_HOST || '192.168.86.48';
 const LLM_PORT    = parseInt(process.env.LLM_PORT || '8000', 10);
 const LLM_MODEL   = process.env.LLM_MODEL || 'Qwen/Qwen2.5-3B-Instruct';
-const LLM_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '15000', 10); // 15s default
+const LLM_TIMEOUT = parseInt(process.env.LLM_TIMEOUT || '30000', 10); // 30s default
 
 class LLMClient {
   constructor(options = {}) {

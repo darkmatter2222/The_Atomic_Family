@@ -115,6 +115,9 @@ class GameSimulation {
       updateFamilyMember(member, dt, gameHour)
     );
 
+    // ── Resolve character collisions (nudge overlapping characters) ──
+    this._resolveCollisions();
+
     // ── Auto lights (dusk/dawn) ──
     if (this.lightsAuto) {
       const shouldBeOn = gameHour >= 18 || gameHour < 6.5;
@@ -269,6 +272,75 @@ class GameSimulation {
   /** Get agentic engine stats */
   getAgenticStats() {
     return this.agenticEngine.stats;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  Collision resolution
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Nudge characters apart when they overlap.
+   * Only affects stationary characters (PERFORMING, IDLE, THINKING).
+   * Walking characters are left alone — they'll resolve naturally.
+   */
+  _resolveCollisions() {
+    const MIN_DIST = 0.6;       // Characters shouldn't be closer than this
+    const NUDGE = 0.35;         // How far to push apart per tick
+    const stationaryStates = new Set(['performing', 'idle', 'thinking', 'choosing']);
+
+    for (let i = 0; i < this.family.length; i++) {
+      const a = this.family[i];
+      if (!stationaryStates.has(a.state)) continue;
+
+      for (let j = i + 1; j < this.family.length; j++) {
+        const b = this.family[j];
+        if (!stationaryStates.has(b.state)) continue;
+
+        const dx = a.position.x - b.position.x;
+        const dz = a.position.z - b.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist < MIN_DIST && dist > 0.001) {
+          // Push apart along the line between them
+          const nx = dx / dist;
+          const nz = dz / dist;
+          const pushDist = (MIN_DIST - dist) * 0.5 + NUDGE * 0.1;
+
+          this.family[i] = {
+            ...this.family[i],
+            position: {
+              ...this.family[i].position,
+              x: a.position.x + nx * pushDist,
+              z: a.position.z + nz * pushDist,
+            }
+          };
+          this.family[j] = {
+            ...this.family[j],
+            position: {
+              ...this.family[j].position,
+              x: b.position.x - nx * pushDist,
+              z: b.position.z - nz * pushDist,
+            }
+          };
+        } else if (dist <= 0.001) {
+          // Exactly overlapping — push in a deterministic direction
+          this.family[i] = {
+            ...this.family[i],
+            position: {
+              ...this.family[i].position,
+              x: a.position.x + NUDGE,
+            }
+          };
+          this.family[j] = {
+            ...this.family[j],
+            position: {
+              ...this.family[j].position,
+              x: b.position.x - NUDGE,
+            }
+          };
+        }
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════

@@ -8,6 +8,7 @@ import CharacterSprite from './components/CharacterSprite';
 import FirstPersonController from './components/FirstPersonController';
 import SidePane from './components/SidePane';
 import ConversationViewer from './components/ConversationViewer';
+import ThoughtDetailModal from './components/ThoughtDetailModal';
 import { HOUSE_LAYOUT } from './game/HouseLayout';
 
 /* ════════════════════════════════════════════════════════════════
@@ -379,6 +380,7 @@ export default function App() {
   // Agentic AI state — conversations, persona data, speech
   const [agenticState, setAgenticState] = useState(null);
   const [showConversations, setShowConversations] = useState(false);
+  const [selectedThought, setSelectedThought] = useState(null);
 
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
@@ -516,6 +518,12 @@ export default function App() {
     socket.emit('setAgenticEnabled', newState);
   }, [agenticState?.enabled]);
   const handleToggleConversations = useCallback(() => setShowConversations(p => !p), []);
+  const handleThoughtClick = useCallback((thoughtId) => {
+    socket.emit('getThoughtDetail', thoughtId, (thought) => {
+      if (thought) setSelectedThought(thought);
+    });
+  }, []);
+  const handleCloseThoughtModal = useCallback(() => setSelectedThought(null), []);
 
   // Extract active speech for rendering bubbles — memoized
   const activeSpeech = useMemo(() => {
@@ -693,15 +701,15 @@ export default function App() {
         />
       )}
 
-      {/* Agentic AI toggle button (bottom-left) */}
+      {/* Agentic AI toggle button (top area, left side, below title) */}
       <div style={{
         position: 'absolute',
-        bottom: showConversations ? 450 : 20,
-        left: 20,
+        top: 75,
+        left: showConversations ? 420 : 20,
         zIndex: 20,
         display: 'flex',
         gap: 6,
-        transition: 'bottom 0.25s ease',
+        transition: 'left 0.25s ease',
       }}>
         <button
           onClick={handleToggleAgentic}
@@ -735,7 +743,7 @@ export default function App() {
             transition: 'all 0.15s ease',
           }}
         >
-          🗣️ Chat
+          🧠 Dashboard
         </button>
         {agenticState?.llmAvailable === false && agenticState?.enabled && (
           <span style={{
@@ -752,12 +760,21 @@ export default function App() {
         )}
       </div>
 
-      {/* Conversation Viewer */}
+      {/* AI Dashboard (full-height left pane) */}
       {showConversations && (
         <ConversationViewer
           agenticState={agenticState}
           selectedCharacter={selectedPlayerName}
           onClose={handleToggleConversations}
+          onThoughtClick={handleThoughtClick}
+        />
+      )}
+
+      {/* Thought Detail Modal */}
+      {selectedThought && (
+        <ThoughtDetailModal
+          thought={selectedThought}
+          onClose={handleCloseThoughtModal}
         />
       )}
 
@@ -1108,7 +1125,7 @@ const ControlsPanel = React.memo(function ControlsPanel({
 
   return (
     <div style={{
-      position: 'absolute', bottom: 20, left: 20, zIndex: 10,
+      position: 'absolute', bottom: 20, right: 235, zIndex: 10,
       background: 'rgba(0,0,0,0.8)', borderRadius: 10,
       padding: '12px 14px',
       fontFamily: '"Courier New", monospace',

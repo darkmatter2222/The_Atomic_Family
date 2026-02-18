@@ -64,7 +64,7 @@ IMPORTANT BEHAVIORAL RULES:
  * Build the user prompt — current situation and available actions.
  * This changes every reasoning cycle.
  */
-function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState, recentEvents = []) {
+function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState, recentEvents = [], agenda = null) {
   const persona = getPersona(member.name);
   const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents);
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
@@ -145,24 +145,35 @@ ${memories}
 ## Recent Conversations
 ${conversations}
 
+${buildAgendaSection(agenda, gameTime)}
+
+## Time Awareness
+It is currently ${timeStr}. Think about how long each activity takes.
+${getTimeUrgencyHints(perception.environment.hour, schedule, member.needs)}
+
 ## Available Actions (pick ONE by id)
 ${interactionList}
 
 ## Instructions
-Decide what to do next. Think about:
+Decide what to do next. Think carefully and deeply about:
 1. Your most pressing needs (eat if hungry, sleep if tired, bathroom if urgent)
-2. The current time and your schedule
-3. Social context — who's around, what they're doing
-4. Recent conversations or requests made of you
-5. Should you say something to someone nearby?
-6. Should you turn on/off the light in this room?
+2. The current time — be very conscious of how much time you have before your next scheduled activity
+3. How long the activity will take — don't start a 30min task if dinner is in 10 minutes
+4. Your plan for the day — what have you done, what's next on your agenda?
+5. Social context — who's around, what they're doing, should you interact?
+6. Recent conversations — respond to people who spoke to you
+7. Should you say something to someone nearby? Be social and expressive!
+8. Should you turn on/off the light in this room?
+
+Be autonomous and proactive. Don't just repeat the same activities. Explore your personality.
+Express yourself through speech regularly — comment on what you're doing, ask questions, make observations.
 
 Respond with ONLY this JSON (no other text):
 {
-  "thought": "1-2 sentence internal reasoning",
+  "thought": "2-3 sentence internal reasoning about your decision",
   "action": "interaction_id from the list above",
-  "speech": "what you say out loud, or null",
-  "speechTarget": "name of person, or null",
+  "speech": "what you say out loud (be expressive!), or null",
+  "speechTarget": "name of person you're addressing, or null",
   "emotion": "current emotion word",
   "lightAction": "on" or "off" or null
 }`;
@@ -255,10 +266,157 @@ function parseDecision(rawResponse, availableInteractions) {
   }
 }
 
+/**
+ * Build an agenda section for the user prompt.
+ */
+function buildAgendaSection(agenda, gameTime) {
+  if (!agenda || !agenda.plan || agenda.plan.length === 0) {
+    return '## My Plan for Today\nNo plan yet — I should think about what I want to accomplish today.';
+  }
+
+  const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
+  const items = agenda.plan.map((item, i) => {
+    const status = item.done ? '✅' : '⬜';
+    const timeStr = item.time || '??:??';
+    const isCurrent = !item.done && parseTimeToHour(item.time) <= hour;
+    const marker = isCurrent ? ' ← NOW' : '';
+    return `${status} ${timeStr} — ${item.activity} (~${item.duration || '?'}min)${marker}`;
+  }).join('\n');
+
+  const completed = agenda.plan.filter(i => i.done).length;
+  return `## My Plan for Today (${completed}/${agenda.plan.length} done)\n${items}`;
+}
+
+function parseTimeToHour(timeStr) {
+  if (!timeStr) return 0;
+  const parts = timeStr.split(':');
+  return parseInt(parts[0] || 0) + parseInt(parts[1] || 0) / 60;
+}
+
+/**
+ * Generate time-urgency hints to make characters conscious of time.
+ */
+function getTimeUrgencyHints(hour, schedule, needs) {
+  const hints = [];
+
+  // Meal time awareness
+  if (hour >= 6.5 && hour < 7.5 && needs?.hunger < 60) hints.push('Breakfast time is approaching — you should eat soon.');
+  if (hour >= 11 && hour < 12 && needs?.hunger < 60) hints.push('It\'s almost lunchtime.');
+  if (hour >= 17 && hour < 18 && needs?.hunger < 60) hints.push('Dinner will be ready soon.');
+
+  // Bedtime awareness  
+  if (hour >= 19.5 && hour < 20) hints.push('It\'s getting close to the kids\' bedtime.');
+  if (hour >= 21 && hour < 22) hints.push('It\'s getting late. Consider winding down.');
+  if (hour >= 22) hints.push('It\'s very late. You should probably go to sleep soon.');
+
+  // Morning awareness
+  if (hour >= 5 && hour < 6) hints.push('Early morning — the day is just starting.');
+
+  // Schedule awareness
+  if (schedule?.next) {
+    const nextHour = parseTimeToHour(schedule.next.time);
+    const timeUntil = nextHour - hour;
+    if (timeUntil > 0 && timeUntil < 0.5) {
+      hints.push(`Your next scheduled activity (${schedule.next.activity}) is in less than 30 minutes!`);
+    } else if (timeUntil > 0 && timeUntil < 1) {
+      hints.push(`You have about ${Math.round(timeUntil * 60)} minutes until ${schedule.next.activity}.`);
+    }
+  }
+
+  return hints.length > 0 ? hints.join('\n') : 'No time-sensitive matters right now.';
+}
+
+/**
+ * Build a prompt for generating a daily agenda.
+ */
+function buildAgendaPrompt(member, gameTime, personaState) {
+  const persona = getPersona(member.name);
+  if (!persona) return '';
+
+  const dayStr = gameTime.toLocaleDateString('en-US', {
+    weekday: 'long',
+    timeZone: 'America/New_York'
+  });
+  const schedule = getCurrentScheduleEntry(member.name, gameTime);
+  const isWeekend = schedule?.isWeekend || false;
+
+  return `It's the start of a new day: ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
+
+As ${persona.fullName} (${persona.age} years old, ${persona.role}), plan out your day.
+Think about:
+- Your personality: ${persona.traits.slice(0, 4).join(', ')}
+- Your likes: ${persona.likes.slice(0, 5).join(', ')}
+- Your responsibilities
+- Meal times (breakfast ~7-8am, lunch ~12pm, dinner ~6pm)
+- ${persona.age < 10 ? 'You\'re a kid — play, learn, and follow house rules!' : ''}
+- ${persona.role === 'father' || persona.role === 'mother' ? 'As a parent, include time for the kids and household tasks.' : ''}
+- ${isWeekend ? 'Weekend — more free time for fun activities!' : 'Regular day routine.'}
+
+Current mood: ${personaState.mood}
+Stress level: ${Math.round(personaState.stressLevel * 100)}%
+
+Respond with ONLY a JSON array of planned activities (no other text):
+[{"time":"7:00","activity":"short description","duration":30}]
+
+Make 6-8 activities covering the whole day from waking to bedtime.
+Keep activity descriptions SHORT (under 30 characters). No markdown, no explanation.`;
+}
+
+/**
+ * Parse the LLM response for a daily agenda.
+ */
+function parseAgenda(rawResponse) {
+  if (!rawResponse) return null;
+
+  try {
+    let jsonStr = rawResponse.trim();
+
+    // Find array brackets
+    const firstBracket = jsonStr.indexOf('[');
+    let lastBracket = jsonStr.lastIndexOf(']');
+
+    // If no closing bracket, try to repair truncated JSON
+    if (firstBracket >= 0 && lastBracket <= firstBracket) {
+      // Truncated — find the last complete object (ending with })
+      let truncated = jsonStr.substring(firstBracket);
+      const lastCloseBrace = truncated.lastIndexOf('}');
+      if (lastCloseBrace > 0) {
+        truncated = truncated.substring(0, lastCloseBrace + 1) + ']';
+        jsonStr = truncated;
+      } else {
+        return null;
+      }
+    } else if (firstBracket >= 0 && lastBracket > firstBracket) {
+      jsonStr = jsonStr.substring(firstBracket, lastBracket + 1);
+    }
+
+    // Remove trailing commas before ] (common LLM mistake)
+    jsonStr = jsonStr.replace(/,\s*\]/g, ']');
+
+    const parsed = JSON.parse(jsonStr);
+    if (!Array.isArray(parsed)) return null;
+
+    return parsed
+      .filter(item => item.time && item.activity)
+      .map(item => ({
+        time: String(item.time),
+        activity: String(item.activity).substring(0, 100),
+        duration: parseInt(item.duration) || 30,
+        done: false,
+        completedAt: null,
+      }));
+  } catch (err) {
+    console.error(`[ReasoningPrompt] Failed to parse agenda: ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = {
   buildSystemPrompt,
   buildUserPrompt,
+  buildAgendaPrompt,
   parseDecision,
+  parseAgenda,
   getFilteredInteractions,
   formatNeeds,
 };
