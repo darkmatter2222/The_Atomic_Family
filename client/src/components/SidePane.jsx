@@ -415,22 +415,24 @@ function PlayerPanel({ member, onCommandAction }) {
 
       <Divider />
 
-      {/* Needs Section (placeholder for future) */}
+      {/* Needs Section */}
       <SectionHeader label="Needs" color="#F87171" />
-      <StatRow label="Energy" value="—" bar={75} barColor="#4ADE80" />
-      <StatRow label="Hunger" value="—" bar={60} barColor="#FBBF24" />
-      <StatRow label="Hygiene" value="—" bar={85} barColor="#60A5FA" />
-      <StatRow label="Social" value="—" bar={50} barColor="#C084FC" />
-      <StatRow label="Fun" value="—" bar={40} barColor="#F472B6" />
+      <StatRow label="Energy" value={member.needs?.energy != null ? `${Math.round(member.needs.energy)}%` : '—'} bar={member.needs?.energy ?? 0} barColor="#4ADE80" />
+      <StatRow label="Hunger" value={member.needs?.hunger != null ? `${Math.round(member.needs.hunger)}%` : '—'} bar={member.needs?.hunger ?? 0} barColor="#FBBF24" />
+      <StatRow label="Hygiene" value={member.needs?.hygiene != null ? `${Math.round(member.needs.hygiene)}%` : '—'} bar={member.needs?.hygiene ?? 0} barColor="#60A5FA" />
+      <StatRow label="Social" value={member.needs?.social != null ? `${Math.round(member.needs.social)}%` : '—'} bar={member.needs?.social ?? 0} barColor="#C084FC" />
+      <StatRow label="Fun" value={member.needs?.fun != null ? `${Math.round(member.needs.fun)}%` : '—'} bar={member.needs?.fun ?? 0} barColor="#F472B6" />
+      <StatRow label="Bladder" value={member.needs?.bladder != null ? `${Math.round(member.needs.bladder)}%` : '—'} bar={member.needs?.bladder ?? 0} barColor="#38BDF8" />
+      <StatRow label="Comfort" value={member.needs?.comfort != null ? `${Math.round(member.needs.comfort)}%` : '—'} bar={member.needs?.comfort ?? 0} barColor="#FB923C" />
 
       <Divider />
 
-      {/* Skills Section (placeholder for future) */}
+      {/* Skills Section */}
       <SectionHeader label="Skills" color="#FBBF24" />
-      <StatRow label="Cooking" value="—" bar={0} barColor="#FBBF24" />
-      <StatRow label="Creativity" value="—" bar={0} barColor="#C084FC" />
-      <StatRow label="Fitness" value="—" bar={0} barColor="#F87171" />
-      <StatRow label="Logic" value="—" bar={0} barColor="#60A5FA" />
+      <StatRow label="Cooking" value={member.skills?.cooking != null ? `${Math.round(member.skills.cooking)}` : '—'} bar={member.skills?.cooking ?? 0} barColor="#FBBF24" />
+      <StatRow label="Creativity" value={member.skills?.creativity != null ? `${Math.round(member.skills.creativity)}` : '—'} bar={member.skills?.creativity ?? 0} barColor="#C084FC" />
+      <StatRow label="Fitness" value={member.skills?.fitness != null ? `${Math.round(member.skills.fitness)}` : '—'} bar={member.skills?.fitness ?? 0} barColor="#F87171" />
+      <StatRow label="Logic" value={member.skills?.logic != null ? `${Math.round(member.skills.logic)}` : '—'} bar={member.skills?.logic ?? 0} barColor="#60A5FA" />
 
       <Divider />
 

@@ -1,19 +1,25 @@
 /**
  * AgenticEngine.js — Master agentic reasoning coordinator.
  *
- * Each family member has their own reasoning loop powered by an LLM.
- * The engine:
- *   1. Detects when a character needs a decision (enters CHOOSING state)
- *   2. Builds a perception + prompt for that character
- *   3. Calls the LLM asynchronously
- *   4. Parses the response into an action + speech
- *   5. Applies the decision to the game simulation
+ * Each family member has a CLUSTER of specialized agents that deliberate
+ * through multiple LLM calls before committing to a decision:
  *
- * Enhanced features:
+ *   1. Observer + Assessor — perceive environment, analyze needs
+ *   2. Deliberator — weigh options, reason through trade-offs
+ *   3. Social Agent — handle interpersonal reasoning (if people present)
+ *   4. Validator — ensure action-speech coherence, output JSON
+ *   5. Reflector — background thinking during activities
+ *
+ * Pipeline types:
+ *   - Full Pipeline (4-5 calls): Deep deliberation for new decisions
+ *   - Conversation Pipeline (2-3 calls): Respond to speech
+ *   - Background Pipeline (1-2 calls): Think while performing a task
+ *
+ * Also provides:
  *   - Daily agenda planning via LLM at start of each day
- *   - Full thought-chain logging with prompts + raw responses
+ *   - Full thought-chain logging with pipeline stages
  *   - Token usage tracking (per-character, per-minute)
- *   - More frequent reasoning (2s interval)
+ *   - Background thinking (characters think while performing activities)
  *   - Collision avoidance — characters avoid standing on each other
  *
  * CommonJS module (server-side).
@@ -21,6 +27,7 @@
 
 const LLMClient = require('./LLMClient');
 const SocialEngine = require('./SocialEngine');
+const ReasoningPipeline = require('./ReasoningPipeline');
 const logger = require('./SimulationLogger');
 const {
   createPersonaState,
@@ -54,6 +61,7 @@ class AgenticEngine {
   constructor(options = {}) {
     this.llmClient = new LLMClient(options.llm || {});
     this.socialEngine = new SocialEngine();
+    this.pipeline = new ReasoningPipeline(this.llmClient);
 
     // Per-character persona state (dynamic: mood, memory, conversations)
     this.personaStates = {};
@@ -67,6 +75,11 @@ class AgenticEngine {
     // Track last reasoning time per character
     this.lastReasoningTime = {};       // memberName → Date.now()
 
+    // ── Background thinking tracking ──
+    this.lastBackgroundThinkTime = {};  // memberName → Date.now()
+    this.pendingBackgroundThinks = new Map(); // memberName → Promise
+    this.backgroundThinkInterval = 25000;  // 25s real-time between background thinks
+
     // Stagger counter for spreading LLM calls
     this.staggerCounter = 0;
 
@@ -79,8 +92,8 @@ class AgenticEngine {
     // ── Daily agendas per character ──
     this.agendas = {};                 // memberName → { plan, completed, generatedForDay }
 
-    // ── Thought chain log — full prompts + responses ──
-    this.thoughtLog = {};              // memberName → [{ id, timestamp, systemPrompt, userPrompt, rawResponse, parsedDecision, elapsed, tokenEstimate }]
+    // ── Thought chain log — full pipeline stages ──
+    this.thoughtLog = {};              // memberName → [{ id, timestamp, stages[], parsedDecision, elapsed, tokenEstimate, pipelineType }]
     this.nextThoughtId = 1;
 
     // ── Token tracking ──
@@ -98,10 +111,18 @@ class AgenticEngine {
       tokensPerMinute: 0,
       tokensByCharacter: {},
       totalTokens: 0,
+      pipelinesRun: 0,
+      backgroundThinks: 0,
     };
 
     // Whether the engine is enabled
     this.enabled = true;
+
+    // ── Hourly reflection tracking ──
+    this.lastReflectionHour = {};  // memberName → last hour reflected (0-23)
+
+    // ── Daily log reset tracking ──
+    this.lastDayKey = null;
 
     console.log('[AgenticEngine] Initialized');
   }
@@ -210,6 +231,12 @@ class AgenticEngine {
     // Generate daily agendas if needed
     this._checkAgendas(family, gameTime, gameSpeed, roomLights);
 
+    // ── Hourly reflection — creates a summary memory every in-game hour ──
+    this._doHourlyReflections(family, gameTime);
+
+    // ── Daily log reset — clears dailyLog at start of new day ──
+    this._resetDailyLogsIfNewDay(gameTime);
+
     // Update tokens-per-minute stat
     this._updateTokenStats();
 
@@ -260,8 +287,35 @@ class AgenticEngine {
     if (!personaState) return;
 
     if (decision) {
+      // ── Anti-repetition guard ──
+      // If the last 3 actions are the same as this one, reject and force fallback
+      const recent = personaState.recentInteractions?.slice(-3) || [];
+      if (recent.length >= 3 && recent.every(a => a === decision.action)) {
+        console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" 4th time in a row — rejected, forcing variety`);
+        // Still record the thought, but null the action so fallback AI picks
+        personaState.lastThought = decision.thought;
+        this.socialEngine.markResponded(memberName);
+        return; // Will cause fallback in GameSimulation
+      }
+
       personaState.lastThought = decision.thought;
       personaState.currentGoal = decision.action;
+
+      // ── Room validation guard ──
+      // Ensure the chosen action belongs to the character's current room (or _any)
+      const { INTERACTION_MAP } = require('./InteractionData');
+      const chosenInteraction = INTERACTION_MAP[decision.action];
+      const memberForRoom = family.find(m => m.name === memberName);
+      if (chosenInteraction && memberForRoom) {
+        const actionRoom = chosenInteraction.room;
+        const charRoom = memberForRoom.currentRoom;
+        if (actionRoom !== '_any' && actionRoom !== charRoom) {
+          console.log(`[AgenticEngine] ${memberName} chose "${decision.action}" (room: ${actionRoom}) but is in ${charRoom} — allowing walk`);
+          // We allow it — the AI system will walk the character to the right room
+          // This is intentional: picking a kitchen action from the living room means "go to kitchen"
+        }
+      }
+
       recordDecision(personaState, decision.action, decision.thought);
 
       // Mark agenda item as completed if it matches
@@ -272,23 +326,60 @@ class AgenticEngine {
         const member = family.find(m => m.name === memberName);
         const room = member?.currentRoom || 'unknown';
 
+        // ── Alone-in-room guard ──
+        // If nobody else is in the room, suppress speech entirely
+        // (no talking to walls — this is a realism fix)
+        const othersInRoom = family.filter(m =>
+          m.name !== memberName && m.currentRoom === room
+        );
+        if (othersInRoom.length === 0 && decision.speechTarget) {
+          console.log(`[AgenticEngine] ${memberName} tried to talk but is alone in ${room} — suppressed`);
+          decision.speech = null;
+          decision.speechTarget = null;
+        }
+
+        // ── Sleeping room guard ──
+        // If someone in the room is sleeping, suppress speech to avoid waking them
+        const sleepersInRoom = othersInRoom.filter(m =>
+          m.activityLabel && m.activityLabel.toLowerCase().includes('sleep')
+        );
+        if (sleepersInRoom.length > 0) {
+          console.log(`[AgenticEngine] ${memberName} suppressed speech in ${room} — ${sleepersInRoom.map(m => m.name).join(', ')} sleeping`);
+          decision.speech = null;
+          decision.speechTarget = null;
+        }
+
         // Resolve speech target name (LLM may use nicknames)
         let resolvedTarget = decision.speechTarget;
         if (resolvedTarget) {
           resolvedTarget = resolveCharacterName(resolvedTarget) || resolvedTarget;
+
+          // ── Cross-room targeting guard ──
+          // Strip speech target if the target is NOT in the same room
+          const targetMember = family.find(m => m.name === resolvedTarget);
+          if (targetMember && targetMember.currentRoom !== room) {
+            console.log(`[AgenticEngine] ${memberName} tried to talk to ${resolvedTarget} in ${targetMember.currentRoom} from ${room} — stripped target`);
+            resolvedTarget = null;
+            // Keep the speech as a general statement, just remove the target
+          }
         }
 
-        personaState.pendingSpeech = {
-          text: decision.speech,
-          target: resolvedTarget,
-          emotion: decision.emotion || 'neutral',
-          timestamp: Date.now(),
-        };
-        // Pass family so SocialEngine can check room proximity for interrupts
-        const result = this.socialEngine.processSpeech(
-          memberName, resolvedTarget, decision.speech,
-          decision.emotion, room, this.personaStates, family
-        );
+        // Final check — if speech still exists after guards
+        if (decision.speech) {
+          personaState.pendingSpeech = {
+            text: decision.speech,
+            target: resolvedTarget,
+            emotion: decision.emotion || 'neutral',
+            timestamp: Date.now(),
+          };
+          // Pass family so SocialEngine can check room proximity for interrupts
+          const result = this.socialEngine.processSpeech(
+            memberName, resolvedTarget, decision.speech,
+            decision.emotion, room, this.personaStates, family
+          );
+        } else {
+          personaState.pendingSpeech = null;
+        }
       } else {
         personaState.pendingSpeech = null;
       }
@@ -323,7 +414,12 @@ class AgenticEngine {
   }
 
   /**
-   * Start an async reasoning call for a character.
+   * Start an async multi-agent reasoning pipeline for a character.
+   * Instead of a single LLM call, runs 4-5 specialized agent stages:
+   *   1. Observer + Assessor → summarize situation & needs
+   *   2. Deliberator → weigh options with chain-of-thought
+   *   3. Social Agent → interpersonal reasoning (if people present)
+   *   4. Validator → coherent JSON output with action-speech match
    */
   _startReasoning(member, family, gameTime, roomLights) {
     const name = member.name;
@@ -335,73 +431,58 @@ class AgenticEngine {
 
     const agenda = this.agendas[name];
     const conversationContext = this.socialEngine.getConversationContext(name);
-    const systemPrompt = buildSystemPrompt(name);
-    const userPrompt = buildUserPrompt(
-      member, family, gameTime, roomLights,
-      personaState, this.recentEvents, agenda, conversationContext
-    );
-
-    const perception = buildPerception(member, family, gameTime, roomLights, this.recentEvents);
-    const availableInteractions = getFilteredInteractions(member.role, gameTime, perception);
 
     const startTime = Date.now();
     const thoughtId = this.nextThoughtId++;
 
-    const promise = this.llmClient.reason(systemPrompt, userPrompt, {
-      temperature: 0.7,
-      max_tokens: 300,
-      top_p: 0.9,
-    }).then(rawResponse => {
-      const elapsed = Date.now() - startTime;
-      this._updateAvgTime(elapsed);
+    const pipelineType = conversationContext ? 'conversation' : 'full';
+    console.log(`[AgenticEngine] ${name} starting ${pipelineType} pipeline (thought #${thoughtId})`);
 
-      // Estimate token usage
-      const promptTokens = this._estimateTokens(systemPrompt + userPrompt);
-      const responseTokens = rawResponse ? this._estimateTokens(rawResponse) : 0;
-      const totalTokens = promptTokens + responseTokens;
+    const promise = this.pipeline.fullPipeline(
+      member, family, gameTime, roomLights,
+      personaState, this.recentEvents, agenda, conversationContext
+    ).then(result => {
+      const elapsed = result.totalElapsed;
+      const totalTokens = result.totalTokens;
+      this._updateAvgTime(elapsed);
       this._recordTokens(name, totalTokens);
 
-      if (!rawResponse) {
-        this._logThought(name, thoughtId, systemPrompt, userPrompt, null, null, elapsed, 0);
-        logger.logLLMCall({ character: name, type: 'decision', systemPrompt, userPrompt, rawResponse: null, parsedDecision: null, elapsed, tokens: 0, valid: false, error: 'No response' });
-        console.log(`[AgenticEngine] No response for ${name} (${elapsed}ms)`);
-        return null;
-      }
+      const stageCount = result.stages.length;
+      const stageNames = result.stages.map(s => s.name).join(' → ');
+      this.stats.pipelinesRun = (this.stats.pipelinesRun || 0) + 1;
 
-      const decision = parseDecision(rawResponse, availableInteractions);
-
-      // Log full thought chain
-      this._logThought(name, thoughtId, systemPrompt, userPrompt, rawResponse, decision, elapsed, totalTokens);
+      // Log full pipeline with all stages
+      this._logThought(name, thoughtId, result.stages, result.finalDecision, elapsed, totalTokens, result.pipelineType, result.pipelineId);
 
       // Log to rolling file
       logger.logLLMCall({
         character: name,
-        type: 'decision',
-        systemPrompt,
-        userPrompt,
-        rawResponse,
-        parsedDecision: decision,
+        type: `pipeline:${result.pipelineType}`,
+        systemPrompt: result.stages.map(s => `[${s.name}] ${s.systemPrompt}`).join('\n---\n'),
+        userPrompt: result.stages.map(s => `[${s.name}] ${s.userPrompt}`).join('\n---\n'),
+        rawResponse: result.stages.map(s => `[${s.name}] ${s.response || s.error || 'no response'}`).join('\n---\n'),
+        parsedDecision: result.finalDecision,
         elapsed,
         tokens: totalTokens,
-        valid: decision?.valid || false,
-        error: null,
+        valid: result.finalDecision?.valid || false,
+        error: result.stages.find(s => s.error)?.error || null,
       });
 
-      if (decision && decision.valid) {
-        console.log(`[AgenticEngine] ${name} decided: ${decision.action} ("${decision.thought}") [${elapsed}ms] [~${totalTokens} tok]`);
-        return decision;
+      if (result.finalDecision && result.finalDecision.valid) {
+        console.log(`[AgenticEngine] ${name} decided: ${result.finalDecision.action} ("${result.finalDecision.thought}") [${stageCount} stages: ${stageNames}] [${elapsed}ms] [~${totalTokens} tok]`);
+        return result.finalDecision;
       } else {
-        console.log(`[AgenticEngine] Invalid decision for ${name}, falling back [${elapsed}ms]`);
-        if (decision) {
-          personaState.lastThought = decision.thought;
+        console.log(`[AgenticEngine] ${name} pipeline produced invalid/no decision [${stageCount} stages] [${elapsed}ms] — falling back`);
+        if (result.finalDecision) {
+          personaState.lastThought = result.finalDecision.thought;
         }
         return null;
       }
     }).catch(err => {
-      console.error(`[AgenticEngine] LLM error for ${name}: ${err.message}`);
+      console.error(`[AgenticEngine] Pipeline error for ${name}: ${err.message}`);
       this.stats.llmErrors++;
-      this._logThought(name, thoughtId, systemPrompt, userPrompt, `ERROR: ${err.message}`, null, Date.now() - startTime, 0);
-      logger.logLLMCall({ character: name, type: 'decision', systemPrompt, userPrompt, rawResponse: `ERROR: ${err.message}`, parsedDecision: null, elapsed: Date.now() - startTime, tokens: 0, valid: false, error: err.message });
+      this._logThought(name, thoughtId, [{ name: 'Error', agent: 'System', icon: '❌', error: err.message, elapsed: Date.now() - startTime }], null, Date.now() - startTime, 0, 'error', null);
+      logger.logLLMCall({ character: name, type: 'pipeline:error', systemPrompt: '', userPrompt: '', rawResponse: `ERROR: ${err.message}`, parsedDecision: null, elapsed: Date.now() - startTime, tokens: 0, valid: false, error: err.message });
       return null;
     }).then(decision => {
       this.resolvedDecisions.set(name, decision);
@@ -411,6 +492,112 @@ class AgenticEngine {
 
     this.pendingDecisions.set(name, { promise, startTime });
     return promise;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  BACKGROUND THINKING — Characters reflect while performing
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Trigger background thinking for performing characters.
+   * Called from the main tick loop. Characters doing activities will
+   * periodically reflect via the Reflector Agent, generating:
+   *   - Internal thoughts (stored as memories)
+   *   - Spontaneous speech (processed through social engine)
+   *   - Plan/agenda updates
+   *
+   * @param {Array} family - All family members
+   * @param {Date} gameTime - Current game time
+   * @param {number} gameSpeed - Current speed multiplier
+   * @param {Object} roomLights - Room light states
+   */
+  doBackgroundThinking(family, gameTime, gameSpeed, roomLights) {
+    if (!this.enabled || this.llmClient.available === false) return;
+    if (gameSpeed > MAX_GAME_SPEED_FOR_LLM) return;
+
+    const now = Date.now();
+
+    for (const member of family) {
+      // Only think while performing (not sleeping)
+      if (member.state !== 'performing') continue;
+      if (member.activityLabel && member.activityLabel.toLowerCase().includes('sleep')) continue;
+
+      // Don't start if already has a pending background think or decision
+      if (this.pendingBackgroundThinks.has(member.name)) continue;
+      if (this.pendingDecisions.has(member.name)) continue;
+
+      // Rate limit background thinking
+      const lastThink = this.lastBackgroundThinkTime[member.name] || 0;
+      if (now - lastThink < this.backgroundThinkInterval) continue;
+
+      this.lastBackgroundThinkTime[member.name] = now;
+      const thoughtId = this.nextThoughtId++;
+      const personaState = this.personaStates[member.name];
+      if (!personaState) continue;
+
+      const agenda = this.agendas[member.name];
+
+      console.log(`[AgenticEngine] ${member.name} background thinking (thought #${thoughtId})`);
+
+      const bgPromise = this.pipeline.backgroundThink(
+        member, family, gameTime, roomLights,
+        personaState, this.recentEvents, agenda
+      ).then(result => {
+        this._recordTokens(member.name, result.totalTokens);
+        this.stats.backgroundThinks = (this.stats.backgroundThinks || 0) + 1;
+
+        // Log the background thought
+        this._logThought(member.name, thoughtId, result.stages, result.result ? { thought: result.result.innerThought, type: 'background', mood: result.result.mood } : null, result.totalElapsed, result.totalTokens, 'background', result.pipelineId);
+
+        if (result.result) {
+          const bg = result.result;
+
+          // Store as memory
+          if (bg.innerThought) {
+            addMemory(personaState, 'thought', `[While ${member.activityLabel}] ${bg.innerThought}`, 2);
+          }
+
+          // Update mood
+          if (bg.mood) {
+            personaState.mood = bg.mood;
+          }
+
+          // Handle spontaneous speech
+          if (bg.wantToSpeak && bg.speech && bg.speechTarget) {
+            const room = member.currentRoom;
+            const othersInRoom = family.filter(m => m.name !== member.name && m.currentRoom === room);
+
+            // Only speak if target is actually in the room
+            const targetInRoom = othersInRoom.some(m => m.name === bg.speechTarget);
+            if (targetInRoom) {
+              personaState.pendingSpeech = {
+                text: bg.speech,
+                target: bg.speechTarget,
+                emotion: bg.mood || 'content',
+                timestamp: Date.now(),
+              };
+              this.socialEngine.processSpeech(
+                member.name, bg.speechTarget, bg.speech,
+                bg.mood || 'content', room, this.personaStates, family
+              );
+              console.log(`[AgenticEngine] ${member.name} says (background): "${bg.speech}" → ${bg.speechTarget}`);
+            }
+          }
+
+          // Handle plan updates
+          if (bg.planUpdate) {
+            addMemory(personaState, 'thought', `Updated plans: ${bg.planUpdate}`, 2);
+          }
+        }
+
+        this.pendingBackgroundThinks.delete(member.name);
+      }).catch(err => {
+        console.error(`[AgenticEngine] Background think error for ${member.name}: ${err.message}`);
+        this.pendingBackgroundThinks.delete(member.name);
+      });
+
+      this.pendingBackgroundThinks.set(member.name, bgPromise);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -431,11 +618,14 @@ class AgenticEngine {
       const agenda = this.agendas[member.name];
       if (!agenda) continue;
 
-      // Only generate agendas between 5-8 AM
-      if (hour < 5 || hour >= 8) continue;
-
       // Generate agenda if: new day AND we haven't generated for this day yet
+      // Allow generation at ANY time (not just 5-8 AM) — if someone doesn't have
+      // an agenda yet, they should get one whenever they first become available
       const needsAgenda = !agenda.generatedForDay || agenda.generatedForDay !== dayKey;
+
+      // Don't generate agendas for sleeping characters
+      const isSleeping = member.activityLabel && member.activityLabel.toLowerCase().includes('sleep');
+      if (isSleeping) continue;
 
       if (needsAgenda) {
         this._agendaGenerating = true;
@@ -488,7 +678,9 @@ class AgenticEngine {
         });
       }
 
-      this._logThought(member.name, this.nextThoughtId++, systemPrompt, agendaPrompt, rawResponse, { type: 'agenda', plan }, elapsed, tokens);
+      this._logThought(member.name, this.nextThoughtId++,
+        [{ name: 'Agenda Planning', agent: 'Planner', icon: '📋', systemPrompt, userPrompt: agendaPrompt, response: rawResponse, elapsed, tokens }],
+        { type: 'agenda', plan }, elapsed, tokens, 'agenda', null);
       logger.logLLMCall({ character: member.name, type: 'agenda', systemPrompt, userPrompt: agendaPrompt, rawResponse, parsedDecision: { type: 'agenda', plan }, elapsed, tokens, valid: !!plan, error: null });
 
     } catch (err) {
@@ -501,12 +693,52 @@ class AgenticEngine {
     const agenda = this.agendas[memberName];
     if (!agenda || !agenda.plan) return;
 
+    const actionLower = (action || '').toLowerCase().replace(/_/g, ' ');
+    const thoughtLower = (thought || '').toLowerCase();
+
+    // Category mapping for fuzzy matching
+    const categoryKeywords = {
+      cooking: ['cook', 'breakfast', 'lunch', 'dinner', 'meal', 'grill', 'bake'],
+      eating: ['eat', 'breakfast', 'lunch', 'dinner', 'snack', 'food'],
+      sleeping: ['sleep', 'nap', 'bed', 'rest'],
+      hygiene: ['shower', 'bath', 'brush', 'wash', 'teeth', 'clean'],
+      exercise: ['exercise', 'soccer', 'swim', 'trampoline', 'bike', 'basketball', 'jog'],
+      hobby: ['draw', 'paint', 'read', 'art', 'craft', 'music', 'guitar', 'piano'],
+      entertainment: ['watch', 'tv', 'game', 'play', 'video'],
+      chores: ['clean', 'laundry', 'vacuum', 'dishes', 'tidy', 'mow', 'yard'],
+      relaxing: ['relax', 'coffee', 'sit', 'chill', 'wind down'],
+      social: ['talk', 'chat', 'conversation', 'hang out', 'family'],
+    };
+
     for (const item of agenda.plan) {
       if (item.done) continue;
-      const actionLower = (action || '').toLowerCase();
       const activityLower = (item.activity || '').toLowerCase();
-      if (actionLower.includes(activityLower.split(' ')[0]) ||
-          activityLower.includes(actionLower.replace(/_/g, ' ').split(' ')[0])) {
+
+      // Direct word overlap check (more than 1 significant word must match)
+      const activityWords = activityLower.split(/\s+/).filter(w => w.length > 2);
+      const actionWords = actionLower.split(/\s+/).filter(w => w.length > 2);
+      const thoughtWords = thoughtLower.split(/\s+/).filter(w => w.length > 3);
+
+      let matchScore = 0;
+
+      // Check action words against activity words
+      for (const aw of actionWords) {
+        if (activityWords.some(w => w.includes(aw) || aw.includes(w))) matchScore += 2;
+      }
+
+      // Check thought words against activity words
+      for (const tw of thoughtWords) {
+        if (activityWords.some(w => w.includes(tw) || tw.includes(w))) matchScore += 1;
+      }
+
+      // Check category keyword overlap
+      for (const [, keywords] of Object.entries(categoryKeywords)) {
+        const activityHasCategory = keywords.some(k => activityLower.includes(k));
+        const actionHasCategory = keywords.some(k => actionLower.includes(k) || thoughtLower.includes(k));
+        if (activityHasCategory && actionHasCategory) matchScore += 1;
+      }
+
+      if (matchScore >= 2) {
         item.done = true;
         item.completedAt = Date.now();
         agenda.completed.push({ ...item, completedAt: Date.now() });
@@ -516,21 +748,119 @@ class AgenticEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  //  HOURLY REFLECTIONS & DAILY RESET
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Hourly reflection — once per game hour, create a memory summarizing
+   * what the character did in the last hour. This gives characters a
+   * sense of time passing and prevents them from losing track of the day.
+   */
+  _doHourlyReflections(family, gameTime) {
+    const currentHour = gameTime.getHours();
+
+    for (const member of family) {
+      const personaState = this.personaStates[member.name];
+      if (!personaState) continue;
+
+      // Skip sleeping characters
+      const isSleeping = member.activityLabel && member.activityLabel.toLowerCase().includes('sleep');
+      if (isSleeping) continue;
+
+      const lastHour = this.lastReflectionHour[member.name];
+      if (lastHour === currentHour) continue; // Already reflected this hour
+
+      // Initialize on first tick
+      if (lastHour === undefined) {
+        this.lastReflectionHour[member.name] = currentHour;
+        continue;
+      }
+
+      this.lastReflectionHour[member.name] = currentHour;
+
+      // Build reflection from recent daily log entries since last reflection
+      // Use a counter: grab entries recorded since the last reflection (not real-time based)
+      const log = personaState.dailyLog || [];
+      const lastReflectedIndex = personaState._lastReflectedLogIndex || 0;
+      const recentEntries = log.slice(lastReflectedIndex);
+      personaState._lastReflectedLogIndex = log.length; // mark current position
+
+      if (recentEntries.length === 0) continue;
+
+      // Summarize activities
+      const actions = [...new Set(recentEntries.map(e => (e.action || '').replace(/_/g, ' ')))];
+      const summary = actions.slice(0, 5).join(', ');
+
+      const timeLabel = gameTime.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/New_York'
+      });
+
+      addMemory(personaState, 'reflection',
+        `[Hourly reflection at ${timeLabel}] In the past hour I: ${summary}. (${recentEntries.length} activities total)`,
+        4
+      );
+    }
+  }
+
+  /**
+   * Reset daily logs at the start of a new day.
+   * This ensures buildDailySummary starts fresh each day.
+   */
+  _resetDailyLogsIfNewDay(gameTime) {
+    const { resetDailyLog } = require('./PersonaManager');
+    const dayKey = gameTime.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+
+    if (this.lastDayKey && this.lastDayKey !== dayKey) {
+      // New day — reset all daily logs
+      for (const [name, personaState] of Object.entries(this.personaStates)) {
+        resetDailyLog(personaState);
+        addMemory(personaState, 'thought', `A new day has begun.`, 3);
+      }
+      console.log(`[AgenticEngine] New day detected (${dayKey}), daily logs reset`);
+    }
+    this.lastDayKey = dayKey;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   //  THOUGHT CHAIN LOGGING
   // ═══════════════════════════════════════════════════════════════
 
-  _logThought(memberName, id, systemPrompt, userPrompt, rawResponse, parsedDecision, elapsed, tokenEstimate) {
+  /**
+   * Log a thought with full pipeline stage data.
+   * @param {string} memberName
+   * @param {number} id - Thought ID
+   * @param {Array} stages - Array of pipeline stage results
+   * @param {Object} parsedDecision - Final decision or background result
+   * @param {number} elapsed - Total pipeline time
+   * @param {number} tokenEstimate
+   * @param {string} pipelineType - 'full', 'conversation', 'background', 'agenda', 'error'
+   * @param {string} pipelineId - Unique pipeline run ID
+   */
+  _logThought(memberName, id, stages, parsedDecision, elapsed, tokenEstimate, pipelineType, pipelineId) {
     if (!this.thoughtLog[memberName]) this.thoughtLog[memberName] = [];
 
     this.thoughtLog[memberName].push({
       id,
       timestamp: Date.now(),
-      systemPrompt,
-      userPrompt,
-      rawResponse,
+      stages: (stages || []).map(s => ({
+        name: s.name,
+        agent: s.agent,
+        icon: s.icon,
+        systemPrompt: s.systemPrompt || null,
+        userPrompt: s.userPrompt || null,
+        response: s.response || null,
+        error: s.error || null,
+        elapsed: s.elapsed || 0,
+        tokens: s.tokens || 0,
+      })),
       parsedDecision,
       elapsed,
       tokenEstimate,
+      pipelineType: pipelineType || 'unknown',
+      pipelineId: pipelineId || null,
       character: memberName,
     });
 
@@ -558,14 +888,16 @@ class AgenticEngine {
     return log.slice(-limit).map(e => ({
       id: e.id,
       timestamp: e.timestamp,
-      thought: e.parsedDecision?.thought || (e.parsedDecision?.type === 'agenda' ? 'Planning the day...' : 'Processing...'),
+      thought: e.parsedDecision?.thought || (e.parsedDecision?.type === 'agenda' ? 'Planning the day...' : e.parsedDecision?.innerThought || 'Processing...'),
       action: e.parsedDecision?.action || e.parsedDecision?.type || null,
       speech: e.parsedDecision?.speech || null,
-      emotion: e.parsedDecision?.emotion || null,
+      emotion: e.parsedDecision?.emotion || e.parsedDecision?.mood || null,
       elapsed: e.elapsed,
       tokens: e.tokenEstimate,
       valid: e.parsedDecision?.valid ?? null,
       character: e.character,
+      pipelineType: e.pipelineType || 'unknown',
+      stageCount: (e.stages || []).length,
     }));
   }
 
@@ -664,13 +996,16 @@ class AgenticEngine {
       thoughtSummaries[name] = log.slice(-8).map(e => ({
         id: e.id,
         timestamp: e.timestamp,
-        thought: e.parsedDecision?.thought || (e.parsedDecision?.type === 'agenda' ? 'Planning the day...' : 'Processing...'),
+        thought: e.parsedDecision?.thought || (e.parsedDecision?.type === 'agenda' ? 'Planning the day...' : e.parsedDecision?.innerThought || 'Processing...'),
         action: e.parsedDecision?.action || e.parsedDecision?.type || null,
         speech: e.parsedDecision?.speech || null,
-        emotion: e.parsedDecision?.emotion || null,
+        emotion: e.parsedDecision?.emotion || e.parsedDecision?.mood || null,
         elapsed: e.elapsed,
         tokens: e.tokenEstimate,
         valid: e.parsedDecision?.valid ?? null,
+        pipelineType: e.pipelineType || 'unknown',
+        stageCount: (e.stages || []).length,
+        stageNames: (e.stages || []).map(s => s.name),
       }));
     }
 

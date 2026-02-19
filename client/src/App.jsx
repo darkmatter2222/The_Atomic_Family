@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import ReactDOM from 'react-dom';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Stats, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
@@ -383,6 +384,7 @@ export default function App() {
   const [showConversations, setShowConversations] = useState(false);
   const [selectedThought, setSelectedThought] = useState(null);
   const [selectedConversation, setSelectedConversation] = useState(null);
+  const [modalLoading, setModalLoading] = useState(false);
 
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
@@ -521,15 +523,69 @@ export default function App() {
   }, [agenticState?.enabled]);
   const handleToggleConversations = useCallback(() => setShowConversations(p => !p), []);
   const handleThoughtClick = useCallback((thoughtId) => {
-    socket.emit('getThoughtDetail', thoughtId, (thought) => {
-      if (thought) setSelectedThought(thought);
-    });
+    if (!thoughtId) return;
+    setModalLoading(true);
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        setModalLoading(false);
+        console.warn('[App] getThoughtDetail timed out for id:', thoughtId);
+      }
+    }, 5000);
+    try {
+      socket.emit('getThoughtDetail', thoughtId, (thought) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        setModalLoading(false);
+        if (thought) {
+          setSelectedThought(thought);
+        } else {
+          console.warn('[App] No thought returned for id:', thoughtId);
+        }
+      });
+    } catch (err) {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        setModalLoading(false);
+      }
+      console.error('[App] Error requesting thought detail:', err);
+    }
   }, []);
   const handleCloseThoughtModal = useCallback(() => setSelectedThought(null), []);
   const handleConversationClick = useCallback((threadId) => {
-    socket.emit('getConversationThread', threadId, (thread) => {
-      if (thread) setSelectedConversation(thread);
-    });
+    if (!threadId) return;
+    setModalLoading(true);
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        setModalLoading(false);
+        console.warn('[App] getConversationThread timed out for id:', threadId);
+      }
+    }, 5000);
+    try {
+      socket.emit('getConversationThread', threadId, (thread) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        setModalLoading(false);
+        if (thread) {
+          setSelectedConversation(thread);
+        } else {
+          console.warn('[App] No thread returned for id:', threadId);
+        }
+      });
+    } catch (err) {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        setModalLoading(false);
+      }
+      console.error('[App] Error requesting conversation thread:', err);
+    }
   }, []);
   const handleCloseConversationModal = useCallback(() => setSelectedConversation(null), []);
 
@@ -779,20 +835,34 @@ export default function App() {
         />
       )}
 
-      {/* Thought Detail Modal */}
-      {selectedThought && (
+      {/* Modals — rendered via React portals to guarantee z-index stacking above everything */}
+      {modalLoading && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 99998, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: '"Courier New", monospace', color: '#FFD700', fontSize: 14,
+          pointerEvents: 'all',
+        }}>
+          <div style={{ background: 'rgba(10,10,30,0.95)', padding: '20px 40px', borderRadius: 10, border: '1px solid rgba(255,215,0,0.3)' }}>
+            ⏳ Loading...
+          </div>
+        </div>,
+        document.body
+      )}
+      {selectedThought && ReactDOM.createPortal(
         <ThoughtDetailModal
           thought={selectedThought}
           onClose={handleCloseThoughtModal}
-        />
+        />,
+        document.body
       )}
-
-      {/* Conversation Detail Modal */}
-      {selectedConversation && (
+      {selectedConversation && ReactDOM.createPortal(
         <ConversationDetailModal
           thread={selectedConversation}
           onClose={handleCloseConversationModal}
-        />
+        />,
+        document.body
       )}
 
       {/* Side Pane */}

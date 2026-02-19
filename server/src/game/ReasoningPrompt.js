@@ -16,6 +16,7 @@ const {
   getCurrentScheduleEntry,
   buildMemorySummary,
   buildConversationSummary,
+  buildDailySummary,
   FAMILY_DATA,
   ENVIRONMENT_RULES,
 } = require('./PersonaManager');
@@ -72,9 +73,22 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
   const memories = buildMemorySummary(personaState);
   const conversations = buildConversationSummary(personaState);
+  const dailySummary = buildDailySummary(personaState);
 
   // Get available interactions
   const availableInteractions = getFilteredInteractions(member.role, gameTime, perception);
+
+  // ── Sort interactions: needs-addressing actions first ──
+  // Actions that restore critical needs get priority in the list
+  const urgentNeeds = getCriticalNeeds(member.needs, 40); // threshold 40 = somewhat urgent
+  const urgentKeys = new Set(urgentNeeds.map(n => n.key));
+
+  const sortedInteractions = [...availableInteractions].sort((a, b) => {
+    // Score: how much does this action help critical needs?
+    const scoreA = getNeedsScore(a, urgentKeys);
+    const scoreB = getNeedsScore(b, urgentKeys);
+    return scoreB - scoreA; // Higher score = more helpful = earlier in list
+  });
 
   // Format needs
   const needsStr = formatNeeds(member.needs);
@@ -97,9 +111,13 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
 
   // Format visible people
   const peopleSeen = perception.visible.peopleInRoom.length > 0
-    ? perception.visible.peopleInRoom.map(p =>
-        `${p.name} (${p.activity || p.state})`
-      ).join(', ')
+    ? perception.visible.peopleInRoom.map(p => {
+        let desc = `${p.name} (${p.activity || p.state})`;
+        if (p.destination && p.state === 'walking') {
+          desc = `${p.name} (walking toward ${p.destination})`;
+        }
+        return desc;
+      }).join(', ')
     : 'Nobody else here.';
 
   // Format sounds
@@ -113,22 +131,45 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
     : 'No schedule entry.';
 
   // Format interactions as numbered list (IDs only, no numbering in the value)
-  const interactionList = availableInteractions
+  const interactionList = sortedInteractions
     .slice(0, 20) // limit to 20 options for smaller model
     .map((ia, i) => `${i + 1}. ${ia.id} — ${ia.label} (${ia.category}, ${ia.duration.min}-${ia.duration.max}min)`)
     .join('\n');
 
-  // Build anti-repetition context
-  const recentActions = personaState.recentInteractions?.slice(-3) || [];
+  // Build anti-repetition context — stronger, tracks last 5
+  const recentActions = personaState.recentInteractions?.slice(-5) || [];
   const recentActionsStr = recentActions.length > 0
-    ? `Recent actions: ${recentActions.join(', ')} — TRY SOMETHING DIFFERENT!`
+    ? `⚠ AVOID REPEATING: ${recentActions.join(', ')} — You just did these! Pick something DIFFERENT!`
     : '';
+
+  // Dark room warning
+  const darkRoomWarning = perception.environment.isDark
+    ? `\n⚠ THIS ROOM IS DARK! Lights are off. Set lightAction to "on" before doing anything, or move to a lit room.`
+    : '';
+
+  // Current activity elapsed time context
+  const elapsedStr = member.interactionTimer && member.interactionDuration
+    ? ` (${Math.round(member.interactionTimer)}s / ${Math.round(member.interactionDuration)}s — ${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done)`
+    : '';
+
+  // Room light status
+  const currentRoomLit = roomLights[member.currentRoom] !== false;
+  const lightStatusEntries = Object.entries(perception.environment.roomLights || {});
+  const lightStatus = lightStatusEntries.length > 0
+    ? lightStatusEntries.map(([room, on]) => `${room}: ${on ? '💡on' : '🌑off'}`).join(', ')
+    : '';
+
+  // Meal time proximity
+  const mealReminder = getMealReminder(perception.environment.hour, member);
+
+  // Parent engagement hints
+  const parentHints = getParentEngagementHints(member, perception);
 
   return `## Current Situation
 TIME: ${dayStr}, ${timeStr} (${perception.environment.timeOfDay})
-LOCATION: ${perception.visible.roomName}
+LOCATION: ${perception.visible.roomName}${!currentRoomLit ? ' ⚠ DARK — lights are off!' : ''}
 MOOD: ${personaState.mood} (stress: ${Math.round(personaState.stressLevel * 100)}%)
-${member.activityLabel ? `CURRENTLY DOING: ${member.activityLabel}` : 'CURRENTLY: idle'}
+${member.activityLabel ? `CURRENTLY DOING: ${member.activityLabel}${elapsedStr}` : 'CURRENTLY: idle'}
 
 ## My Needs (0=desperate, 100=full)
 ${needsStr}
@@ -137,8 +178,11 @@ ${criticalStr}
 ## What I See
 Room: ${perception.visible.roomName}${perception.environment.isDark ? ' (dark — lights are off)' : ''}
 People here: ${peopleSeen}
+Nearby room lights: ${lightStatus}
 Bathroom occupied: ${perception.environment.bathroomOccupied ? 'Yes' : 'No'}
 Sleeping family: ${perception.environment.sleepingMembers.length > 0 ? perception.environment.sleepingMembers.join(', ') : 'Nobody sleeping'}
+
+${buildConversationResponseSection(conversationContext)}
 
 ## What I Hear
 ${soundsHeard}
@@ -147,20 +191,24 @@ ${soundsHeard}
 ${scheduleStr}
 ${schedule?.isWeekend ? '(Weekend)' : '(Weekday)'}
 
+## What I've Done Today
+${dailySummary}
+
 ## Recent Memory
 ${memories}
 
 ## Recent Conversations
 ${conversations}
 ${recentActionsStr}
-
-${buildConversationResponseSection(conversationContext)}
+${darkRoomWarning}
 
 ${buildAgendaSection(agenda, gameTime)}
 
 ## Time Awareness
 It is currently ${timeStr}. Think about how long each activity takes.
-${getTimeUrgencyHints(perception.environment.hour, schedule, member.needs)}
+${getTimeUrgencyHints(perception.environment.hour, schedule, member.needs, member.name)}
+${mealReminder}
+${parentHints}
 
 ## Available Actions (pick ONE by id)
 ${interactionList}
@@ -174,20 +222,23 @@ Decide what to do next. Think carefully:
 5. Social context — who's around, what they're doing
 6. Recent conversations — RESPOND to people who spoke to you! This is your HIGHEST priority.
 7. Should you say something to someone nearby? Be social and expressive!
+8. Room lighting — turn on lights if the room is dark before doing anything!
 
 CRITICAL CONVERSATION RULES:
 - You can ONLY talk to people who are listed in "People here" above. They must be IN YOUR ROOM.
 - Do NOT talk to people who are not in the same room. You cannot see or hear them.
 - If someone just spoke TO you (see Active Conversation above), you MUST reply with speech directed at them.
 - Set speechTarget to the exact NAME of the person (e.g., "Dad", "Mom", "Emma", "Lily", "Jack").
-- Have natural back-and-forth conversations — ask follow-up questions, react to what was said.
-- If nobody is in the room with you, set speech to null.
+- Have natural back-and-forth conversations — ask follow-up questions, react to what they said.
+- If nobody is in the room with you, set speech to null and speechTarget to null.
+- Do NOT target someone in a different room. Only target people listed in "People here".
 - Express your personality through how you speak!
 
 LIGHT RULES:
-- Set lightAction to "on" ONLY if the room is dark and you need light.
-- Set lightAction to "off" ONLY if you are the last person leaving the room.
-- Otherwise set lightAction to null (leave lights as they are).
+- Set lightAction to "on" ONLY if the room is dark and you need light for your activity.
+- Set lightAction to "off" ONLY if you are the LAST person leaving the room (nobody else listed here).
+- If lights are already on, set lightAction to null.
+- If lights are already off and you don't need them, set lightAction to null.
 
 VARIETY: Don't repeat the same action or speech you just did. Try different activities!
 
@@ -226,12 +277,20 @@ ${conversationContext.from} said: "${conversationContext.lastText}" (${conversat
 }
 
 /**
- * Get interactions filtered by role, time, and environmental constraints.
+ * Get interactions filtered by role, time, room, and environmental constraints.
+ * CRITICAL FIX: Only show interactions available in the character's CURRENT room
+ * (plus _any room actions). Characters must walk to another room to access
+ * its interactions — they shouldn't see kitchen actions from a bedroom.
  */
 function getFilteredInteractions(role, gameTime, perception) {
   const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
+  const currentRoom = perception.self?.room || 'living_room';
+
   let pool = getInteractionsForRole(role);
   pool = filterByTimeWindow(pool, hour);
+
+  // ── Room-based filtering — ONLY show actions in current room (+ _any) ──
+  pool = pool.filter(i => i.room === currentRoom || i.room === '_any');
 
   // Filter out bathroom interactions if bathroom is occupied
   if (perception.environment.bathroomOccupied) {
@@ -249,10 +308,18 @@ function getFilteredInteractions(role, gameTime, perception) {
     const adultsOutside = perception.visible?.peopleInRoom?.some(p =>
       p.role === 'father' || p.role === 'mother'
     ) || false;
-    // This is approximate — we check if an adult is nearby
-    if (!adultsOutside && perception.self.room !== '_exterior') {
+    if (!adultsOutside && currentRoom !== '_exterior') {
       pool = pool.filter(i => !['swim_in_pool', 'swim_laps', 'pool_cannonball', 'diving_board_dive'].includes(i.id));
     }
+  }
+
+  // ── Cap activity durations near bedtime ──
+  // Don't offer 30+ min activities within 30 min of character's bedtime
+  const bedtimes = { Jack: 20.0, Lily: 20.5, Emma: 21.5, Dad: 22.5, Mom: 22.0 };
+  const memberName = perception.self?.memberName;
+  const myBedtime = bedtimes[memberName];
+  if (myBedtime && hour >= myBedtime - 0.5 && hour < myBedtime + 1) {
+    pool = pool.filter(i => !i.duration || i.duration.max <= 30);
   }
 
   return pool;
@@ -368,22 +435,54 @@ function parseTimeToHour(timeStr) {
 
 /**
  * Generate time-urgency hints to make characters conscious of time.
+ * Enhanced with per-character bedtime awareness and parental duties.
  */
-function getTimeUrgencyHints(hour, schedule, needs) {
+function getTimeUrgencyHints(hour, schedule, needs, memberName) {
   const hints = [];
+
+  // Per-character bedtime awareness
+  const bedtimes = { Jack: 20.0, Lily: 20.5, Emma: 21.5, Dad: 22.5, Mom: 22.0 };
+  const myBedtime = bedtimes[memberName];
 
   // Meal time awareness
   if (hour >= 6.5 && hour < 7.5 && needs?.hunger < 60) hints.push('Breakfast time is approaching — you should eat soon.');
   if (hour >= 11 && hour < 12 && needs?.hunger < 60) hints.push('It\'s almost lunchtime.');
   if (hour >= 17 && hour < 18 && needs?.hunger < 60) hints.push('Dinner will be ready soon.');
 
-  // Bedtime awareness  
-  if (hour >= 19.5 && hour < 20) hints.push('It\'s getting close to the kids\' bedtime.');
-  if (hour >= 21 && hour < 22) hints.push('It\'s getting late. Consider winding down.');
-  if (hour >= 22) hints.push('It\'s very late. You should probably go to sleep soon.');
+  // Parent-specific bedtime enforcement reminders
+  // Framed as awareness rather than direct visual knowledge
+  if (memberName === 'Dad' || memberName === 'Mom') {
+    if (hour >= 19.5 && hour < 20.0) hints.push('Jack\'s bedtime (8:00 PM) is coming up soon. You should start getting him ready for bed.');
+    if (hour >= 20.0 && hour < 20.5) hints.push('It\'s past Jack\'s bedtime (8:00 PM). Go check that he\'s heading to bed. Lily\'s bedtime (8:30 PM) is next.');
+    if (hour >= 20.5 && hour < 21.0) hints.push('It\'s past Lily\'s bedtime (8:30 PM). Go check on the kids\' rooms to make sure they\'re in bed.');
+    if (hour >= 21.0 && hour < 21.5) hints.push('Emma should be heading to bed soon (9:30 PM). Remind her if you see her.');
+    if (hour >= 21.5) hints.push('All kids should be in bed by now. If you see any of them still up, send them to bed.');
+  }
+
+  // Personal bedtime awareness
+  if (myBedtime) {
+    const timeUntilBed = myBedtime - hour;
+    if (timeUntilBed > 0 && timeUntilBed < 0.5) {
+      hints.push(`Your bedtime is in less than 30 minutes! Start winding down.`);
+    } else if (hour >= myBedtime && hour < 24) {
+      hints.push(`It's past your bedtime! You should go to sleep.`);
+    } else if (timeUntilBed > 0 && timeUntilBed < 1) {
+      hints.push(`About ${Math.round(timeUntilBed * 60)} minutes until your bedtime.`);
+    }
+  }
+
+  // General late night
+  if (hour >= 22 && (memberName === 'Dad' || memberName === 'Mom')) {
+    hints.push('It\'s getting late. The kids should all be asleep by now. Consider winding down.');
+  }
 
   // Morning awareness
   if (hour >= 5 && hour < 6) hints.push('Early morning — the day is just starting.');
+
+  // Parent morning duties
+  if ((memberName === 'Mom' || memberName === 'Dad') && hour >= 6.5 && hour < 8) {
+    hints.push('Morning routine: make sure kids are up and getting breakfast!');
+  }
 
   // Schedule awareness
   if (schedule?.next) {
@@ -400,7 +499,85 @@ function getTimeUrgencyHints(hour, schedule, needs) {
 }
 
 /**
+ * Get meal-time reminders for parents to coordinate family meals.
+ * Also provides awareness of who's eating and who hasn't eaten yet.
+ */
+function getMealReminder(hour, member) {
+  const isParent = member.role === 'father' || member.role === 'mother';
+
+  const meals = [
+    { name: 'breakfast', start: 7.0, end: 8.5, prepStart: 6.5 },
+    { name: 'lunch', start: 11.5, end: 13.0, prepStart: 11.0 },
+    { name: 'dinner', start: 17.5, end: 19.0, prepStart: 17.0 },
+  ];
+
+  const lines = [];
+  for (const meal of meals) {
+    if (isParent && hour >= meal.prepStart && hour < meal.start) {
+      lines.push(`🍽 It's almost ${meal.name} time! Consider starting to prepare ${meal.name} in the kitchen.`);
+    }
+    if (hour >= meal.start && hour < meal.start + 0.5) {
+      if (isParent) {
+        lines.push(`🍽 Time for ${meal.name}! The family should be eating together. Call everyone to the kitchen/dining area.`);
+      } else {
+        lines.push(`🍽 It's ${meal.name} time! You should head to the kitchen to eat.`);
+      }
+    }
+    // Gentle reminder if meal window is passing and hunger is low
+    if (hour >= meal.start + 0.5 && hour < meal.end && (member.needs?.hunger || 100) < 50) {
+      lines.push(`🍽 You should eat ${meal.name} soon — you're getting hungry.`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Generate proactive parent engagement hints.
+ * Parents should actively engage with kids — reading bedtime stories,
+ * checking homework, playing together, teaching skills.
+ */
+function getParentEngagementHints(member, perception) {
+  const isParent = member.role === 'father' || member.role === 'mother';
+  if (!isParent) return '';
+
+  const hints = [];
+  const hour = perception.environment.hour;
+  const kidsInRoom = perception.visible.peopleInRoom.filter(p =>
+    p.role === 'son' || p.role === 'daughter'
+  );
+
+  // If kids are in the room, suggest engagement
+  if (kidsInRoom.length > 0) {
+    const kidNames = kidsInRoom.map(k => k.name).join(' and ');
+    if (hour >= 18 && hour < 20) {
+      hints.push(`🧒 ${kidNames} ${kidsInRoom.length > 1 ? 'are' : 'is'} here with you. Consider spending quality time — play a game, read together, or help with homework.`);
+    }
+    if (hour >= 19.5 && hour < 21) {
+      hints.push(`🌙 It's getting close to bedtime for the kids. Consider reading a bedtime story or helping them get ready for bed.`);
+    }
+    // Morning routine
+    if (hour >= 6.5 && hour < 8) {
+      hints.push(`☀️ ${kidNames} ${kidsInRoom.length > 1 ? 'are' : 'is'} here. Make sure they eat breakfast and get ready for the day.`);
+    }
+  }
+
+  // If alone and kids are awake, suggest going to check on them
+  if (kidsInRoom.length === 0 && hour >= 15 && hour < 20) {
+    const awakeKids = ['Jack', 'Lily', 'Emma'].filter(name =>
+      !perception.environment.sleepingMembers.includes(name)
+    );
+    if (awakeKids.length > 0 && Math.random() < 0.3) { // Only hint occasionally
+      hints.push(`💭 You haven't checked on the kids in a while. ${awakeKids.join(', ')} should be awake.`);
+    }
+  }
+
+  return hints.length > 0 ? hints.join('\n') : '';
+}
+
+/**
  * Build a prompt for generating a daily agenda.
+ * TIME-AWARE: Plan from CURRENT time forward, not always from 7 AM.
  */
 function buildAgendaPrompt(member, gameTime, personaState) {
   const persona = getPersona(member.name);
@@ -418,15 +595,32 @@ function buildAgendaPrompt(member, gameTime, personaState) {
   });
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
   const isWeekend = schedule?.isWeekend || false;
+  const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
 
-  return `Good morning! It's ${timeStr} on ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
+  // Time-appropriate greeting
+  let greeting;
+  if (hour < 12) greeting = 'Good morning!';
+  else if (hour < 18) greeting = 'Good afternoon!';
+  else greeting = 'Good evening!';
 
-As ${persona.fullName} (${persona.age} years old, ${persona.role}), plan out your day.
+  // How many hours left in the day
+  const bedtimes = { Jack: 20.0, Lily: 20.5, Emma: 21.5, Dad: 22.5, Mom: 22.0 };
+  const myBedtime = bedtimes[member.name] || 22.0;
+  const hoursLeft = Math.max(0, myBedtime - hour);
+  const hoursLeftStr = hoursLeft > 0 ? `You have about ${Math.round(hoursLeft)} hours until bedtime.` : 'It\'s past your bedtime — plan for just winding down.';
+
+  // Expected number of items based on time remaining
+  const expectedItems = Math.max(2, Math.min(8, Math.ceil(hoursLeft / 1.5)));
+
+  return `${greeting} It's ${timeStr} on ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
+
+As ${persona.fullName} (${persona.age} years old, ${persona.role}), plan the REST of your day starting from NOW (${timeStr}).
+${hoursLeftStr}
 Think about:
 - Your personality: ${persona.traits.slice(0, 4).join(', ')}
 - Your likes: ${persona.likes.slice(0, 5).join(', ')}
 - Your responsibilities
-- Meal times (breakfast ~7-8am, lunch ~12pm, dinner ~6pm)
+- Upcoming meal times (breakfast ~7-8am, lunch ~12pm, dinner ~6pm) — only include meals that haven't happened yet
 - ${persona.age < 10 ? 'You\'re a kid — play, learn, and follow house rules!' : ''}
 - ${persona.role === 'father' || persona.role === 'mother' ? 'As a parent, include time for the kids and household tasks.' : ''}
 - ${isWeekend ? 'Weekend — more free time for fun activities!' : 'Regular day routine.'}
@@ -434,15 +628,20 @@ Think about:
 Current mood: ${personaState.mood}
 Stress level: ${Math.round(personaState.stressLevel * 100)}%
 
-Respond with ONLY a JSON array of planned activities (no other text):
-[{"time":"7:00","activity":"short description","duration":30}]
+IMPORTANT: Start your plan from the CURRENT time (${timeStr}), NOT from the morning.
+Only plan activities that make sense for this time of day.
 
-Make 6-8 activities covering the whole day from waking to bedtime.
+Respond with ONLY a JSON array of planned activities (no other text):
+[{"time":"${gameTime.getHours()}:${String(gameTime.getMinutes()).padStart(2, '0')}","activity":"short description","duration":30}]
+
+Make ${expectedItems} activities from now until bedtime.
+Use 24-hour format for times (e.g., "14:30" not "2:30 PM"). Hours must be 0-23, minutes 0-59.
 Keep activity descriptions SHORT (under 30 characters). No markdown, no explanation.`;
 }
 
 /**
  * Parse the LLM response for a daily agenda.
+ * Sanitizes invalid times, caps to 8 items max.
  */
 function parseAgenda(rawResponse) {
   if (!rawResponse) return null;
@@ -477,17 +676,48 @@ function parseAgenda(rawResponse) {
 
     return parsed
       .filter(item => item.time && item.activity)
-      .map(item => ({
-        time: String(item.time),
-        activity: String(item.activity).substring(0, 100),
-        duration: parseInt(item.duration) || 30,
-        done: false,
-        completedAt: null,
-      }));
+      .map(item => {
+        // Sanitize time — fix invalid formats like "8:60", "12:60"
+        let timeStr = String(item.time);
+        const timeParts = timeStr.split(':');
+        if (timeParts.length === 2) {
+          let h = parseInt(timeParts[0]) || 0;
+          let m = parseInt(timeParts[1]) || 0;
+          // Fix invalid minutes (8:60 → 9:00)
+          if (m >= 60) { h += Math.floor(m / 60); m = m % 60; }
+          // Clamp hours
+          h = Math.max(0, Math.min(23, h));
+          m = Math.max(0, Math.min(59, m));
+          timeStr = `${h}:${String(m).padStart(2, '0')}`;
+        }
+        return {
+          time: timeStr,
+          activity: String(item.activity).substring(0, 100),
+          duration: Math.min(parseInt(item.duration) || 30, 120), // Cap at 2 hours
+          done: false,
+          completedAt: null,
+        };
+      })
+      .slice(0, 8); // Cap to 8 items max
   } catch (err) {
     console.error(`[ReasoningPrompt] Failed to parse agenda: ${err.message}`);
     return null;
   }
+}
+
+/**
+ * Score how much an interaction helps critical/urgent needs.
+ * Interactions that restore needs in the urgentKeys set score higher.
+ */
+function getNeedsScore(interaction, urgentKeys) {
+  if (!interaction.needsEffects || urgentKeys.size === 0) return 0;
+  let score = 0;
+  for (const [need, amount] of Object.entries(interaction.needsEffects)) {
+    if (urgentKeys.has(need) && amount > 0) {
+      score += amount; // higher restoration = higher score
+    }
+  }
+  return score;
 }
 
 module.exports = {

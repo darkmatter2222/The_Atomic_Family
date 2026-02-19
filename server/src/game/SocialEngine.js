@@ -35,6 +35,7 @@ const MAX_GLOBAL_LOG = 200;       // Global conversation log limit
 const SPEECH_DISPLAY_MS = 6000;   // How long speech bubbles last
 const MAX_THREAD_TURNS = 6;       // Max back-and-forth turns per thread
 const THREAD_TIMEOUT_MS = 60000;  // Thread expires after 60s of no activity
+const THREAD_RETAIN_MS = 600000;  // Keep expired threads for 10 minutes (was 60s — too aggressive)
 const THREAD_RESPONSE_WINDOW_MS = 30000; // How long to wait for a reply (30s)
 const MAX_ACTIVE_THREADS = 10;    // Max concurrent threads
 const INTERRUPT_COOLDOWN_MS = 10000; // Min time between interrupts to same person
@@ -750,21 +751,33 @@ class SocialEngine {
 
   /**
    * Cleanup dead/expired threads.
+   * Keeps threads much longer so the UI can fetch them for the conversation modal.
    */
   _cleanupThreads() {
+    const now = Date.now();
     const toDelete = [];
     for (const [id, thread] of this.threads) {
-      if (!thread.isActive()) {
+      // Only delete threads that have been inactive for a long time
+      // (10 minutes instead of 60s — prevents conversation modal from breaking)
+      if (!thread.isActive() && now - thread.lastActivityAt > THREAD_RETAIN_MS) {
         toDelete.push(id);
       }
     }
-    // Keep recently-dead threads for 30s so UI can still fetch them
-    const now = Date.now();
-    for (const id of toDelete) {
-      const thread = this.threads.get(id);
-      if (thread && now - thread.lastActivityAt > 60000) {
-        this.threads.delete(id);
+    // Cap total threads to prevent memory leaks
+    const MAX_THREADS = 200;
+    if (this.threads.size - toDelete.length > MAX_THREADS) {
+      // Delete oldest threads beyond the cap
+      const sortedThreads = [...this.threads.entries()]
+        .sort((a, b) => a[1].lastActivityAt - b[1].lastActivityAt);
+      const excess = this.threads.size - toDelete.length - MAX_THREADS;
+      for (let i = 0; i < excess; i++) {
+        if (!toDelete.includes(sortedThreads[i][0])) {
+          toDelete.push(sortedThreads[i][0]);
+        }
       }
+    }
+    for (const id of toDelete) {
+      this.threads.delete(id);
     }
   }
 

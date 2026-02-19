@@ -196,7 +196,7 @@ const overlayStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 10000,
+  zIndex: 99999,
   fontFamily: '"Courier New", monospace',
 };
 

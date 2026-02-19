@@ -156,6 +156,7 @@ function addConversation(personaState, speaker, target, text, emotion = 'neutral
 
 /**
  * Record a decision made by the character.
+ * Also populates the dailyLog for activity tracking.
  */
 function recordDecision(personaState, interactionId, reason) {
   personaState.lastDecision = {
@@ -169,6 +170,18 @@ function recordDecision(personaState, interactionId, reason) {
     personaState.recentInteractions = personaState.recentInteractions.slice(-10);
   }
 
+  // Populate daily log — track what they've done today
+  if (!personaState.dailyLog) personaState.dailyLog = [];
+  personaState.dailyLog.push({
+    timestamp: Date.now(),
+    action: interactionId,
+    reason: reason ? reason.substring(0, 100) : '',
+  });
+  // Keep daily log to last 50 entries
+  if (personaState.dailyLog.length > 50) {
+    personaState.dailyLog = personaState.dailyLog.slice(-50);
+  }
+
   addMemory(personaState, 'decision', `Decided to: ${interactionId} — ${reason}`, 2);
 }
 
@@ -179,19 +192,52 @@ function updateMood(personaState, needs, recentEvents = []) {
   const persona = PERSONA_MAP[personaState.name];
   if (!persona) return;
 
-  // Base mood from needs
-  const needValues = Object.values(needs || {});
-  const avgNeed = needValues.length > 0 ? needValues.reduce((s, v) => s + v, 0) / needValues.length : 50;
+  // Base mood from needs — use weighted average (energy and hunger matter more)
+  const needWeights = { energy: 1.5, hunger: 1.3, hygiene: 1.0, social: 0.8, fun: 0.7, comfort: 0.6, bladder: 1.2 };
+  let weightedSum = 0, weightTotal = 0;
+  for (const [key, value] of Object.entries(needs || {})) {
+    const w = needWeights[key] || 1.0;
+    weightedSum += value * w;
+    weightTotal += w;
+  }
+  const weightedAvg = weightTotal > 0 ? weightedSum / weightTotal : 50;
 
-  if (avgNeed > 70) {
-    personaState.mood = 'happy';
-    personaState.moodIntensity = Math.min((avgNeed - 70) / 30, 1);
-  } else if (avgNeed > 40) {
+  // Find the LOWEST need — a single critical need can override mood
+  const lowestNeed = Math.min(...Object.values(needs || { x: 50 }));
+
+  // Effective avg blends weighted average with lowest need (critical need pulls mood down)
+  const effectiveAvg = lowestNeed < 20
+    ? weightedAvg * 0.4 + lowestNeed * 0.6 // Critical need dominates
+    : lowestNeed < 40
+      ? weightedAvg * 0.7 + lowestNeed * 0.3
+      : weightedAvg;
+
+  // Expanded mood vocabulary based on personality traits
+  const agreeableness = persona.personality?.agreeableness || 0.5;
+  const openness = persona.personality?.openness || 0.5;
+
+  if (effectiveAvg > 80) {
+    // Very satisfied — mood varies by personality
+    const happyMoods = agreeableness > 0.6
+      ? ['cheerful', 'grateful', 'happy']
+      : openness > 0.6 ? ['energized', 'inspired', 'happy'] : ['happy', 'content', 'satisfied'];
+    personaState.mood = happyMoods[Math.floor(Date.now() / 300000) % happyMoods.length]; // rotate slowly
+    personaState.moodIntensity = Math.min((effectiveAvg - 70) / 30, 1);
+  } else if (effectiveAvg > 60) {
     personaState.mood = 'content';
     personaState.moodIntensity = 0.5;
-  } else if (avgNeed > 20) {
-    personaState.mood = 'uncomfortable';
-    personaState.moodIntensity = (40 - avgNeed) / 20;
+  } else if (effectiveAvg > 40) {
+    // Mildly uncomfortable — what's the cause?
+    if ((needs?.energy || 100) < 30) personaState.mood = 'tired';
+    else if ((needs?.hunger || 100) < 30) personaState.mood = 'hungry';
+    else if ((needs?.social || 100) < 25) personaState.mood = 'lonely';
+    else personaState.mood = 'restless';
+    personaState.moodIntensity = (60 - effectiveAvg) / 20;
+  } else if (effectiveAvg > 20) {
+    if ((needs?.energy || 100) < 15) personaState.mood = 'exhausted';
+    else if ((needs?.hunger || 100) < 15) personaState.mood = 'starving';
+    else personaState.mood = 'uncomfortable';
+    personaState.moodIntensity = (40 - effectiveAvg) / 20;
   } else {
     personaState.mood = 'miserable';
     personaState.moodIntensity = 1;
@@ -200,7 +246,7 @@ function updateMood(personaState, needs, recentEvents = []) {
   // Stress increases with low needs and neuroticism
   const neuroticism = persona.personality?.neuroticism || 0.5;
   personaState.stressLevel = Math.max(0, Math.min(1,
-    (1 - avgNeed / 100) * neuroticism + personaState.stressLevel * 0.7
+    (1 - weightedAvg / 100) * neuroticism + personaState.stressLevel * 0.7
   ));
 
   // Social battery
@@ -275,6 +321,50 @@ function buildConversationSummary(personaState, maxEntries = 8) {
 }
 
 /**
+ * Build a "today so far" summary from the dailyLog.
+ * Groups activities and shows frequency with sequential numbering.
+ * Uses relative ordering rather than real-time timestamps
+ * (since game speed may differ from real time).
+ */
+function buildDailySummary(personaState) {
+  const log = personaState.dailyLog || [];
+  if (log.length === 0) return 'Just woke up — haven\'t done anything yet today.';
+
+  // Group by action, track count and most recent position (order-based)
+  const actionCounts = {};
+  const actionLastIndex = {};
+  for (let i = 0; i < log.length; i++) {
+    const label = (log[i].action || 'unknown').replace(/_/g, ' ');
+    actionCounts[label] = (actionCounts[label] || 0) + 1;
+    actionLastIndex[label] = i;
+  }
+
+  // Sort by most recent first
+  const sorted = Object.entries(actionCounts)
+    .sort((a, b) => (actionLastIndex[b[0]] || 0) - (actionLastIndex[a[0]] || 0));
+
+  // Show the most recent unique actions with recency labels
+  const items = sorted.slice(0, 8).map(([action, count], idx) => {
+    const recency = idx === 0 ? 'most recent' : idx < 3 ? 'recent' : 'earlier';
+    return `- ${action}${count > 1 ? ` (${count}x)` : ''} (${recency})`;
+  });
+
+  // Also show a brief chronological recent trail
+  const recentTrail = log.slice(-5)
+    .map(e => (e.action || '?').replace(/_/g, ' '))
+    .join(' → ');
+
+  return `Today so far (${log.length} activities):\n${items.join('\n')}\nRecent sequence: ${recentTrail}`;
+}
+
+/**
+ * Reset daily log — call at start of new day.
+ */
+function resetDailyLog(personaState) {
+  personaState.dailyLog = [];
+}
+
+/**
  * Get nickname that this character uses for another.
  */
 function getNickname(speakerName, targetName) {
@@ -322,6 +412,8 @@ module.exports = {
   getCurrentScheduleEntry,
   buildMemorySummary,
   buildConversationSummary,
+  buildDailySummary,
+  resetDailyLog,
   getNickname,
   serializePersonaState,
   FAMILY_DATA,

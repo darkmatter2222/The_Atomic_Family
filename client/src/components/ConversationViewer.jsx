@@ -290,6 +290,9 @@ function TimelineTab({ social, personas, thoughtSummaries, filter, showThoughts,
             tokens: t.tokens,
             valid: t.valid,
             thoughtId: t.id,
+            pipelineType: t.pipelineType || null,
+            stageCount: t.stageCount || 0,
+            stageNames: t.stageNames || [],
           });
         }
       }
@@ -603,6 +606,15 @@ function ThoughtEntry({ item, onClick }) {
   const timeStr = new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const isClickable = !!onClick && !!item.thoughtId;
 
+  // Pipeline type visual config
+  const pipelineStyles = {
+    full:         { icon: '🧠', label: 'Full', color: '#7986CB', bg: 'rgba(63,81,181,0.1)' },
+    conversation: { icon: '💬', label: 'Conv', color: '#81C784', bg: 'rgba(76,175,80,0.1)' },
+    background:   { icon: '💭', label: 'BG',   color: '#BA68C8', bg: 'rgba(156,39,176,0.1)' },
+    agenda:       { icon: '📋', label: 'Plan', color: '#FFB74D', bg: 'rgba(255,152,0,0.1)' },
+  };
+  const pipelineCfg = pipelineStyles[item.pipelineType] || null;
+
   return (
     <div
       onClick={isClickable ? onClick : undefined}
@@ -610,19 +622,34 @@ function ThoughtEntry({ item, onClick }) {
         marginBottom: 4,
         padding: '4px 8px',
         borderRadius: 5,
-        background: item.valid === false ? 'rgba(244,67,54,0.06)' : 'rgba(100, 100, 150, 0.08)',
+        background: item.valid === false ? 'rgba(244,67,54,0.06)' : (pipelineCfg?.bg || 'rgba(100, 100, 150, 0.08)'),
         border: item.valid === false
           ? '1px solid rgba(244,67,54,0.15)'
-          : '1px solid rgba(100, 100, 150, 0.12)',
+          : `1px solid ${pipelineCfg ? pipelineCfg.color + '22' : 'rgba(100, 100, 150, 0.12)'}`,
         cursor: isClickable ? 'pointer' : 'default',
         transition: 'background 0.1s ease',
       }}
       onMouseEnter={isClickable ? (e) => { e.currentTarget.style.background = 'rgba(100,100,150,0.18)'; } : undefined}
-      onMouseLeave={isClickable ? (e) => { e.currentTarget.style.background = item.valid === false ? 'rgba(244,67,54,0.06)' : 'rgba(100,100,150,0.08)'; } : undefined}
+      onMouseLeave={isClickable ? (e) => { e.currentTarget.style.background = item.valid === false ? 'rgba(244,67,54,0.06)' : (pipelineCfg?.bg || 'rgba(100,100,150,0.08)'); } : undefined}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ fontSize: 10 }}>💭</span>
+        <span style={{ fontSize: 10 }}>{pipelineCfg?.icon || '💭'}</span>
         <span style={{ color: nameColor, fontWeight: 'bold', fontSize: 10 }}>{item.speaker}</span>
+        {/* Pipeline type badge */}
+        {pipelineCfg && (
+          <span style={{
+            fontSize: 8,
+            padding: '0px 4px',
+            borderRadius: 3,
+            background: `${pipelineCfg.color}15`,
+            border: `1px solid ${pipelineCfg.color}33`,
+            color: pipelineCfg.color,
+            fontWeight: 'bold',
+          }}>
+            {pipelineCfg.label}
+            {item.stageCount > 0 && ` ×${item.stageCount}`}
+          </span>
+        )}
         {item.action && (
           <span style={{
             fontSize: 9,

@@ -36,6 +36,25 @@ class GameSimulation {
     this.paused = false;
     this.syncToReal = false;
 
+    // ── Initialize needs based on current game time ──
+    // If starting mid-day, decay needs to reflect time awake
+    const startHour = this.gameTime.getHours() + this.gameTime.getMinutes() / 60;
+    const wakeTimes = { Dad: 6.0, Mom: 6.0, Emma: 8.5, Lily: 7.5, Jack: 6.5 };
+    this.family = this.family.map(m => {
+      const wakeTime = wakeTimes[m.name] || 7;
+      let hoursAwake = 0;
+      if (startHour >= wakeTime && startHour < 23) {
+        hoursAwake = startHour - wakeTime;
+      } else if (startHour < 5) {
+        hoursAwake = (24 - wakeTime) + startHour; // past midnight
+      }
+      if (hoursAwake > 0) {
+        const { decayNeeds } = require('./InteractionData');
+        return { ...m, needs: decayNeeds(m.needs, hoursAwake, startHour) };
+      }
+      return m;
+    });
+
     // ── Room lights ──
     this.roomLights = {};
     HOUSE_LAYOUT.rooms.forEach(r => { this.roomLights[r.id] = true; });
@@ -111,6 +130,9 @@ class GameSimulation {
     //    Also handles conversation interrupts (forces addressed characters into CHOOSING)
     this._tickAgentic();
 
+    // ── Background thinking — characters reflect while performing tasks ──
+    this.agenticEngine.doBackgroundThinking(this.family, this.gameTime, this.gameSpeed, this.roomLights);
+
     // ── Update each family member ──
     this.family = this.family.map(member =>
       updateFamilyMember(member, dt, gameHour)
@@ -119,17 +141,60 @@ class GameSimulation {
     // ── Resolve character collisions (nudge overlapping characters) ──
     this._resolveCollisions();
 
-    // ── Auto lights (dusk/dawn) ──
+    // ── Smart per-room light management ──
+    //    Instead of toggling ALL rooms at once, manage lights based on:
+    //    1. Occupancy: turn off lights in empty rooms at night
+    //    2. Turn on lights when someone enters a dark room at night
+    //    3. Keep exterior/hallway lights on during evening hours
     if (this.lightsAuto) {
-      const shouldBeOn = gameHour >= 18 || gameHour < 6.5;
-      let changed = false;
-      for (const key of Object.keys(this.roomLights)) {
-        if (this.roomLights[key] !== shouldBeOn) {
-          this.roomLights[key] = shouldBeOn;
-          changed = true;
+      const isNightTime = gameHour >= 18 || gameHour < 6.5;
+      const isDaytime = !isNightTime;
+
+      // Build room occupancy map
+      const roomOccupancy = {};
+      for (const m of this.family) {
+        const room = m.currentRoom || 'unknown';
+        roomOccupancy[room] = (roomOccupancy[room] || 0) + 1;
+      }
+
+      for (const roomId of Object.keys(this.roomLights)) {
+        const occupied = (roomOccupancy[roomId] || 0) > 0;
+
+        if (isDaytime) {
+          // During day: all lights off (natural light)
+          if (this.roomLights[roomId] !== false) {
+            this.roomLights[roomId] = false;
+          }
+        } else {
+          // At night: lights on in occupied rooms, off in empty rooms
+          // Exception: hallway and porch stay on for safety
+          const keepOn = roomId === 'hallway' || roomId === '_exterior';
+          if (keepOn) {
+            this.roomLights[roomId] = true;
+          } else if (occupied) {
+            // Someone is in this room — turn on lights
+            if (!this.roomLights[roomId]) {
+              this.roomLights[roomId] = true;
+            }
+          } else {
+            // No one in this room at night — turn off after a short delay
+            // (instant for simulation purposes)
+            if (this.roomLights[roomId]) {
+              this.roomLights[roomId] = false;
+            }
+          }
         }
       }
     }
+
+    // ── Bedtime enforcement ──
+    //    Characters past their bedtime get forced to sleep.
+    //    Jack: 20:00, Lily: 20:30, Emma: 21:30, Adults: 23:00
+    this._enforceBedtimes(gameHour);
+
+    // ── Morning wake routine ──
+    //    Wake sleeping characters at their wake time
+    this._enforceWakeUp(gameHour);
   }
 
   /**
@@ -276,6 +341,191 @@ class GameSimulation {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  //  Bedtime & Wake enforcement
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Bedtime rules from personas.json houseRules:
+   *   Jack: 20:00, Lily: 20:30, Emma: 21:30
+   *   Adults: when energy < 20 after 22:00, or forced at 23:00
+   *
+   * Parents announce bedtime ~15 min before enforcement.
+   */
+  _enforceBedtimes(gameHour) {
+    const bedtimes = {
+      Jack: 20.0,
+      Lily: 20.5,
+      Emma: 21.5,
+      Dad: 23.0,
+      Mom: 23.0,
+    };
+
+    // ── Parent bedtime announcements (speech) ──
+    // Triggers once per child per night: a parent says "time for bed" 
+    if (!this._bedtimeAnnouncements) this._bedtimeAnnouncements = {};
+    const today = this.gameTime.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+    if (this._bedtimeAnnouncementDay !== today) {
+      this._bedtimeAnnouncements = {};
+      this._bedtimeAnnouncementDay = today;
+    }
+
+    const kidBedtimes = [
+      { name: 'Jack', hour: 20.0, message: "Jack, it's 8 o'clock — time for bed, buddy!" },
+      { name: 'Lily', hour: 20.5, message: "Lily sweetie, it's 8:30 — bedtime!" },
+      { name: 'Emma', hour: 21.5, message: "Emma, it's 9:30 — time to head to bed." },
+    ];
+
+    for (const kid of kidBedtimes) {
+      // Announce ~5 min before bedtime (announce window: bedtime-0.08 to bedtime)
+      const announceTime = kid.hour - 0.08; // ~5 min before
+      if (gameHour >= announceTime && gameHour < kid.hour + 0.2 && !this._bedtimeAnnouncements[kid.name]) {
+        // Pick a parent to announce (prefer one who is idle/choosing)
+        const parent = this.family.find(m =>
+          (m.role === 'father' || m.role === 'mother') &&
+          (m.state === 'idle' || m.state === 'choosing' || m.state === 'performing') &&
+          !(m.activityLabel && m.activityLabel.toLowerCase().includes('sleep'))
+        );
+        if (parent) {
+          const personaState = this.agenticEngine.personaStates[parent.name];
+          if (personaState) {
+            personaState.pendingSpeech = {
+              text: kid.message,
+              target: kid.name,
+              emotion: 'caring',
+              timestamp: Date.now(),
+            };
+            // Process through social engine for proper conversation tracking
+            this.agenticEngine.socialEngine.processSpeech(
+              parent.name, kid.name, kid.message, 'caring',
+              parent.currentRoom, this.agenticEngine.personaStates, this.family
+            );
+            this._bedtimeAnnouncements[kid.name] = true;
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < this.family.length; i++) {
+      const member = this.family[i];
+      const bedtime = bedtimes[member.name];
+      if (!bedtime) continue;
+
+      // Already sleeping — skip
+      if (member.activityLabel && member.activityLabel.toLowerCase().includes('sleep')) continue;
+
+      // Check if past bedtime
+      const pastBedtime = gameHour >= bedtime || gameHour < 5; // 5 AM = new day cutoff
+
+      if (!pastBedtime) continue;
+
+      // Adults get a softer enforcement — only if energy is low OR very late
+      if (member.role === 'father' || member.role === 'mother') {
+        const energy = member.needs?.energy || 50;
+        const veryLate = gameHour >= 23.5 || gameHour < 5;
+        if (energy > 20 && !veryLate) continue;
+      }
+
+      // ── Kids get STRONGER enforcement — interrupt ANY state (except sleeping) ──
+      // After 30 min past bedtime, force them to bed regardless of state
+      const isKid = member.role === 'son' || member.role === 'daughter';
+      const veryPastBedtime = gameHour >= bedtime + 0.5 || gameHour < 5;
+
+      if (isKid && veryPastBedtime) {
+        // Force kids to bed regardless — cancel walking, thinking, performing
+        const sleepInteractions = {
+          Jack: 'kids_sleep_night_3',
+          Lily: 'kids_sleep_night_1',
+          Emma: 'kids_sleep_night_2',
+        };
+        const sleepAction = sleepInteractions[member.name];
+        if (sleepAction) {
+          // Cancel any pending LLM decisions
+          if (this.agenticEngine.pendingDecisions.has(member.name)) {
+            this.agenticEngine.pendingDecisions.delete(member.name);
+            this.agenticEngine.resolvedDecisions.delete(member.name);
+          }
+          this.family[i] = commandFamilyMember(this.family[i], sleepAction);
+          const personaState = this.agenticEngine.personaStates[member.name];
+          if (personaState) {
+            const { addMemory } = require('./PersonaManager');
+            addMemory(personaState, 'action', `Was sent to bed — past bedtime`, 3);
+          }
+          continue; // Skip the normal enforcement below
+        }
+      }
+
+      // Grace period: only enforce if they're idle/choosing (don't interrupt performing/walking/thinking)
+      if (member.state !== 'idle' && member.state !== 'choosing') continue;
+
+      // Force them to their bed
+      const sleepInteractions = {
+        Jack: 'kids_sleep_night_3',
+        Lily: 'kids_sleep_night_1',
+        Emma: 'kids_sleep_night_2',
+        Dad: 'sleep_night',
+        Mom: 'sleep_night',
+      };
+
+      const sleepAction = sleepInteractions[member.name];
+      if (sleepAction) {
+        this.family[i] = commandFamilyMember(this.family[i], sleepAction);
+        // Add memory about going to bed
+        const personaState = this.agenticEngine.personaStates[member.name];
+        if (personaState) {
+          const { addMemory } = require('./PersonaManager');
+          addMemory(personaState, 'action', `Went to bed for the night`, 3);
+        }
+      }
+    }
+  }
+
+  /**
+   * Wake up characters at their ideal wake time.
+   * Only wakes characters who are currently performing a sleep interaction.
+   */
+  _enforceWakeUp(gameHour) {
+    const wakeTimes = {
+      Jack: 6.5,
+      Lily: 7.5,
+      Emma: 8.5,
+      Dad: 6.0,
+      Mom: 6.0,
+    };
+
+    for (let i = 0; i < this.family.length; i++) {
+      const member = this.family[i];
+      const wakeTime = wakeTimes[member.name];
+      if (!wakeTime) continue;
+
+      // Only wake if sleeping
+      if (!member.activityLabel || !member.activityLabel.toLowerCase().includes('sleep')) continue;
+      if (member.state !== 'performing') continue;
+
+      // Check if past wake time
+      if (gameHour >= wakeTime && gameHour < 20) { // Don't wake in the evening
+        // Force out of performing by setting timer to max
+        this.family[i] = {
+          ...member,
+          interactionTimer: member.interactionDuration,
+          state: 'idle',
+          currentInteraction: null,
+          activityLabel: null,
+          activityAnim: null,
+          idleTimer: 0,
+          idleDuration: 1,
+        };
+
+        // Add wake memory
+        const personaState = this.agenticEngine.personaStates[member.name];
+        if (personaState) {
+          const { addMemory } = require('./PersonaManager');
+          addMemory(personaState, 'action', `Woke up for the day`, 3);
+        }
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   //  Collision resolution
   // ═══════════════════════════════════════════════════════════════
 
@@ -384,7 +634,7 @@ class GameSimulation {
         this.family[i] = {
           ...member,
           state: 'thinking',
-          activityLabel: '💭 Thinking...',
+          activityLabel: '🧠 Multi-agent deliberation...',
           activityAnim: null,
           _thinkingRealStart: Date.now(),
         };
