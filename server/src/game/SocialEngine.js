@@ -653,6 +653,10 @@ class SocialEngine {
         const persona = getPersona(member.name);
         if (!persona) continue;
 
+        // Children don't cry audibly while sleeping — suppress distress events
+        const isSleeping = member.activityLabel && member.activityLabel.toLowerCase().includes('sleep');
+        if (isSleeping) continue;
+
         const comfort = member.needs?.comfort || 50;
         const social = member.needs?.social || 50;
         const neuroticism = persona.personality?.neuroticism || 0.5;

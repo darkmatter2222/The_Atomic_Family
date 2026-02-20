@@ -144,6 +144,23 @@ class ReasoningPipeline {
       ? `\nMY HABITS & PATTERNS I'VE NOTICED ABOUT MYSELF:\n${longTermPatterns}`
       : '';
 
+    // Build current activity context for Observer
+    let currentActivityHint = '';
+    {
+      const actLabel = member.activityLabel;
+      const actState = member.state;
+      if (actLabel && actState === 'performing') {
+        const elapsedStr = member.interactionTimer && member.interactionDuration
+          ? ` — ${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done`
+          : '';
+        currentActivityHint = `\nWHAT YOU'RE CURRENTLY DOING:\nYou are in the middle of: ${actLabel}${elapsedStr}. This is already in progress — factor it into your thinking.`;
+      } else if (actState === 'walking' && actLabel) {
+        currentActivityHint = `\nWHAT YOU'RE CURRENTLY DOING:\nYou are ${actLabel}.`;
+      } else if (personaState?.nextIntention) {
+        currentActivityHint = `\nWHAT YOU WERE PLANNING:\nYour last intention was: "${personaState.nextIntention}"`;
+      }
+    }
+
     const stage1 = await this._runStage({
       name: 'Observe & Assess',
       agent: 'Observer + Assessor',
@@ -167,7 +184,7 @@ ${needsNarrative}
 ${moodNarrative}
 
 ${memoryNarrative}
-${scheduleHint}${patternsHint}
+${scheduleHint}${patternsHint}${currentActivityHint}
 What's going on right now? What matters most to you? What opportunities or concerns do you notice?`,
       options: { temperature: 0.0, max_tokens: 200, top_p: 0.9 },
     });
@@ -425,6 +442,7 @@ CRITICAL: "speechTarget" must be someone in your room, or null. Only set it to a
 CRITICAL: If your action starts with "go_to_", set speech to null and speechTarget to null — you're leaving, not talking.
 CRITICAL: If the reasoning mentions wanting to go somewhere else, leave the room, or needing something in another room — pick a go_to_* navigation action.
 CRITICAL: Do NOT repeat the same action you just did. Pick something DIFFERENT.
+CRITICAL: Do NOT start speech with your own name "${member.name}". You are ${member.name} speaking TO someone else. Never say "David, can you..." when you ARE David. Address others by their name, not yourself.
 If nobody is in the room, speech MUST be null and speechTarget MUST be null.
 Navigation actions (go_to_*) are REAL options — use them when the character wants to move between rooms.`,
       userPrompt: `MY DELIBERATION:
@@ -478,6 +496,17 @@ Output ONLY this JSON:
         // Light already off — no need to turn off
         finalDecision.lightAction = null;
       }
+
+      // Post-process: strip self-addressing from speech
+      // e.g. "David, could you..." when David IS the speaker
+      if (finalDecision.speech && typeof finalDecision.speech === 'string') {
+        const selfAddressPattern = new RegExp(`^${member.name}[,?!]\\s*`, 'i');
+        if (selfAddressPattern.test(finalDecision.speech)) {
+          finalDecision.speech = finalDecision.speech.replace(selfAddressPattern, '');
+          // Capitalize first letter
+          finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+        }
+      }
     }
 
     return this._buildResult(stages, finalDecision, pipelineStart, 'full', pipelineId);
@@ -492,6 +521,22 @@ Output ONLY this JSON:
     const peopleInRoom = perception.visible.peopleInRoom;
     const memoryNarrative = narrateMemories(personaState, 5);
     const moodNarrative = narrateMood(member.name, personaState.mood, personaState.moodIntensity, personaState.stressLevel, member.needs);
+
+    // ── Inner state for richer conversation context ──
+    const socialEnergyNarrative = narrateSocialEnergy(
+      member.name,
+      personaState.socialBattery || 0.5,
+      member.needs?.social || 50,
+      persona.personality?.extraversion || 0.5,
+      (personaState.conversations || []).length
+    );
+    const emotionalCascadeSummary = summarizeEmotionalCascade(personaState);
+    const nextIntentionHint = personaState.nextIntention
+      ? `\nWhat I was planning to do next: ${personaState.nextIntention}`
+      : '';
+    const emotionHint = emotionalCascadeSummary
+      ? `\nRecent emotional state: ${emotionalCascadeSummary}`
+      : '';
 
     const timeStr = gameTime.toLocaleTimeString('en-US', {
       hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York'
@@ -524,6 +569,11 @@ Someone is talking to you. Think about what they said, how you feel, and what yo
 Be natural and in-character. Don't force it — if you don't have much to say, keep it short.
 Keep replies CONCISE — 1-2 sentences like real conversation, not paragraphs.
 If the conversation is wrapping up, just say bye or acknowledge briefly.
+NATURAL SPEECH RULES:
+- Do NOT start your reply with the other person's name. Real people don't say "Sarah, could you..." in every single sentence.
+- Do NOT start your reply with your own name. You are YOU — don't address yourself.
+- Speak like a real ${persona.age}-year-old ${persona.role} actually talks — informal, direct, unscripted.
+- Short replies feel more like real conversation than long ones.
 Think through your response in 2-3 sentences. No JSON.`,
       userPrompt: `${conversationContext.from} just spoke to me:
 
@@ -533,7 +583,8 @@ ${conversationContext.fullThread}
 ${conversationContext.from} said: "${conversationContext.lastText}" (${conversationContext.lastEmotion})
 
 ${moodNarrative}
-What I'm currently doing: ${currentActionLabel}
+${socialEnergyNarrative}
+What I'm currently doing: ${currentActionLabel}${nextIntentionHint}${emotionHint}
 ${memoryNarrative}
 ${windDownHint}
 
@@ -580,7 +631,9 @@ Think as ${persona.name} — authentic, real.`,
       systemPrompt: `You are the decision validator for ${persona.fullName}. Output ONLY valid JSON — no other text.
 CRITICAL: speechTarget MUST be "${conversationContext.from}" since they spoke to you.
 CRITICAL: speech MUST be a short, natural reply (1-2 sentences max).
-CRITICAL: Keep your reply CONCISE. Real people don't give speeches in casual conversation.`,
+CRITICAL: Keep your reply CONCISE. Real people don't give speeches in casual conversation.
+CRITICAL: Do NOT start speech with your own name "${member.name}". You are ${member.name} talking TO ${conversationContext.from}. Never address yourself.
+CRITICAL: Don't start every sentence with "${conversationContext.from}'s name". People don't say someone's name in every line.`,
       userPrompt: `MY THINKING ABOUT THIS CONVERSATION:
 ${stage1.response}
 
@@ -602,7 +655,7 @@ Output ONLY this JSON:
   "emotion": "your emotion word",
   "lightAction": null
 }`,
-      options: { temperature: 0.2, max_tokens: 250, top_p: 0.9 },
+      options: { temperature: 0.5, max_tokens: 250, top_p: 0.9 },
     });
     stages.push(stage2);
 
@@ -612,6 +665,16 @@ Output ONLY this JSON:
     if (finalDecision && !finalDecision.valid && currentActionId) {
       finalDecision.action = currentActionId;
       finalDecision.valid = true;
+    }
+
+    // Post-process: strip self-addressing from speech
+    // e.g. "Sarah, I was just thinking..." when Sarah IS the speaker
+    if (finalDecision?.speech && typeof finalDecision.speech === 'string') {
+      const selfAddressPattern = new RegExp(`^${member.name}[,?!]\\s*`, 'i');
+      if (selfAddressPattern.test(finalDecision.speech)) {
+        finalDecision.speech = finalDecision.speech.replace(selfAddressPattern, '');
+        finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+      }
     }
 
     return this._buildResult(stages, finalDecision, pipelineStart, 'conversation', pipelineId);
