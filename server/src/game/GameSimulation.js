@@ -139,6 +139,22 @@ class GameSimulation {
       updateFamilyMember(member, dt, gameHour)
     );
 
+    // ── Parent-presence comfort boost for distressed children ──
+    // When a parent is in the same room as a child with low comfort,
+    // the child's comfort slowly recovers — being near a caregiver is naturally soothing.
+    const parentRooms = new Set(
+      this.family.filter(m => m.role === 'father' || m.role === 'mother').map(m => m.currentRoom)
+    );
+    const gameHoursElapsed = dt / 3600;
+    for (const child of this.family) {
+      if ((child.role === 'son' || child.role === 'daughter') &&
+          child.needs && child.needs.comfort < 30 &&
+          parentRooms.has(child.currentRoom)) {
+        // +5 comfort per game-hour while parent is present
+        child.needs.comfort = Math.min(30, child.needs.comfort + 5 * gameHoursElapsed);
+      }
+    }
+
     // ── Resolve character collisions (nudge overlapping characters) ──
     this._resolveCollisions();
 

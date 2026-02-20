@@ -61,6 +61,9 @@ class SocialEngine {
 
     // ── Per-character speech rate limiting ──
     this.lastSpeechTime = {};         // memberName → Date.now() of last speech
+
+    // ── Child distress cooldown (prevent spam) ──
+    this.lastDistressAt = {};         // memberName → Date.now() of last distress event
   }
 
   /**
@@ -661,7 +664,12 @@ class SocialEngine {
         const social = member.needs?.social || 50;
         const neuroticism = persona.personality?.neuroticism || 0.5;
 
+        // 60-second cooldown — prevent distress spam flooding the log
+        const lastDistress = this.lastDistressAt[member.name] || 0;
+        if (Date.now() - lastDistress < 60000) continue;
+
         if (comfort < 15 && neuroticism > 0.5 && Math.random() < 0.01) {
+          this.lastDistressAt[member.name] = Date.now();
           const event = {
             id: 'child_crying',
             timestamp: Date.now(),

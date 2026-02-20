@@ -448,11 +448,13 @@ Your job: translate the character's natural reasoning into a concrete action fro
 Match the INTENT of the reasoning to the CLOSEST available action. Think about what the character wants to DO, not their exact words.
 CRITICAL: The "action" must be an EXACT id from the available actions list. Pick the best semantic match.
 CRITICAL: "speech" must match the chosen action — don't say "time for breakfast" if your action is going to bed.
+CRITICAL: "speech" must be ACTUAL SPOKEN WORDS — dialogue you say aloud to another person. NOT a description of what you plan to say or think about saying. WRONG: "I think I'll talk to Lily about my feelings." RIGHT: "Lily, are you okay?" If you wouldn't literally say it out loud, set speech to null.
 CRITICAL: "speechTarget" must be someone in your room, or null. Only set it to a NAME from the people present.
 CRITICAL: If your action starts with "go_to_", set speech to null and speechTarget to null — you're leaving, not talking.
 CRITICAL: If the reasoning mentions wanting to go somewhere else, leave the room, or needing something in another room — pick a go_to_* navigation action.
 CRITICAL: Do NOT repeat the same action you just did. Pick something DIFFERENT.
 CRITICAL: Do NOT start speech with your own name "${member.name}". You are ${member.name} speaking TO someone else. Never say "David, can you..." when you ARE David. Address others by their name, not yourself.
+CRITICAL: Adults in a couple address each other by name ("Dave", "Sarah") or a term of endearment ("babe") — NEVER by parenting role. "Mom" and "Dad" are what the CHILDREN call them. Sarah calls her husband "babe" or "Dave". David calls his wife "babe" or "Sarah".
 If nobody is in the room, speech MUST be null and speechTarget MUST be null.
 Navigation actions (go_to_*) are REAL options — use them when the character wants to move between rooms.`,
       userPrompt: `MY DELIBERATION:
@@ -515,6 +517,25 @@ Output ONLY this JSON:
           finalDecision.speech = finalDecision.speech.replace(selfAddressPattern, '');
           // Capitalize first letter
           finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+        }
+
+        // Post-process: strip inner-monologue patterns from speech
+        // e.g. "I think I'll talk to Lily about my feelings." — that's thinking, not talking
+        const innerMonologueRe = /^(I think I'?ll |I'm going to |Maybe I'?ll |I'?ll probably |I should |I want to )/i;
+        if (innerMonologueRe.test(finalDecision.speech)) {
+          finalDecision.speech = null; // This is internal monologue, not spoken dialogue
+        }
+
+        // Post-process: strip role-title address from adult-to-adult speech
+        // e.g. "Mom, could you..." when Dad is speaking to Mom  or  "Dad, sure thing" when Mom responds
+        if (finalDecision.speech && (member.role === 'father' || member.role === 'mother')) {
+          const roleAddressRe = /^(Mom|Dad)[,!?]\s*/i;
+          if (roleAddressRe.test(finalDecision.speech)) {
+            finalDecision.speech = finalDecision.speech.replace(roleAddressRe, '');
+            if (finalDecision.speech) {
+              finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+            }
+          }
         }
       }
     }
@@ -642,9 +663,11 @@ Think as ${persona.name} — authentic, real.`,
       systemPrompt: `You are the decision validator for ${persona.fullName}. Output ONLY valid JSON — no other text.
 CRITICAL: speechTarget MUST be "${conversationContext.from}" since they spoke to you.
 CRITICAL: speech MUST be a short, natural reply (1-2 sentences max).
+CRITICAL: speech must be ACTUAL SPOKEN WORDS — what you literally say aloud. NOT a description of what you plan to say.
 CRITICAL: Keep your reply CONCISE. Real people don't give speeches in casual conversation.
 CRITICAL: Do NOT start speech with your own name "${member.name}". You are ${member.name} talking TO ${conversationContext.from}. Never address yourself.
-CRITICAL: Don't start every sentence with "${conversationContext.from}'s name". People don't say someone's name in every line.`,
+CRITICAL: Don't start every sentence with "${conversationContext.from}'s name". People don't say someone's name in every line.
+CRITICAL: Adults in a couple use names or "babe" — NEVER "Mom" or "Dad" when addressing their partner.`,
       userPrompt: `MY THINKING ABOUT THIS CONVERSATION:
 ${stage1.response}
 
@@ -685,6 +708,23 @@ Output ONLY this JSON:
       if (selfAddressPattern.test(finalDecision.speech)) {
         finalDecision.speech = finalDecision.speech.replace(selfAddressPattern, '');
         finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+      }
+
+      // Strip inner-monologue patterns — thinking is not speaking
+      const innerMonologueRe = /^(I think I'?ll |I'm going to |Maybe I'?ll |I'?ll probably |I should |I want to )/i;
+      if (innerMonologueRe.test(finalDecision.speech)) {
+        finalDecision.speech = null;
+      }
+
+      // Strip role-title address in adult-to-adult speech ("Mom," / "Dad,")
+      if (finalDecision.speech && (member.role === 'father' || member.role === 'mother')) {
+        const roleAddressRe = /^(Mom|Dad)[,!?]\s*/i;
+        if (roleAddressRe.test(finalDecision.speech)) {
+          finalDecision.speech = finalDecision.speech.replace(roleAddressRe, '');
+          if (finalDecision.speech) {
+            finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+          }
+        }
       }
     }
 
