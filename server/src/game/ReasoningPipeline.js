@@ -266,9 +266,10 @@ What's going on right now? What matters most to you? What opportunities or conce
     }
 
     // Agenda context
-    const agendaStr = agenda?.plan?.length > 0
-      ? `My plan: ${agenda.plan.filter(i => !i.done).map(i => `${i.time} ${i.activity}`).join(', ')}`
-      : 'No plan yet.';
+    const agendaUndonePlan = agenda?.plan?.filter(i => !i.done) || [];
+    const agendaStr = agendaUndonePlan.length > 0
+      ? `Plans I made for today (NOT YET DONE — these compete with immediate impulses): ${agendaUndonePlan.map(i => `${i.time} ${i.activity}`).join(' | ')}`
+      : 'No specific plan today.';
 
     // Schedule context — what the character's typical routine says they should be doing
     let scheduleStr = '';
@@ -328,6 +329,9 @@ You don't scan a checklist. You don't optimize. You FEEL your way through a deci
 Sometimes you procrastinate. Sometimes you get distracted. Sometimes you do something 
 impulsive because it sounds fun or because you're avoiding something else.
 Consider what you WANT, what you SHOULD do, and what you'll ACTUALLY do — they're often different.
+If you're absorbed in what you're currently doing — it's going well, you're almost done, or you're 
+just ENJOYING it — you might resist switching. A book keeps you reading. Cooking demands your 
+attention. Half-finished things have gravitational pull. Let yourself stay absorbed sometimes.
 
 ${this._getCharacterReasoningStyle(persona)}
 No JSON — just your honest inner monologue in 4-6 sentences. What are you thinking? What are you going to do?`,
@@ -398,6 +402,11 @@ Keep speech short — 1-2 sentences max. Real conversation is concise.
 No JSON — just your social reasoning and what you might say (or "I\'d stay quiet").`,
         userPrompt: `I've decided to: ${stage2.response}
 
+MY CURRENT ACTIVITY: ${member.activityLabel || 'idle'}${member.interactionTimer && member.interactionDuration ? ` (${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done)` : ''}
+What I'm doing shapes what I'd naturally say. If I'm cooking, I'd mention food or timing.
+If I'm reading, I'd reference the book. If I'm working on something, I'd comment on it.
+My words should FLOW FROM my activity — not appear from nowhere.
+
 People in the room with me:
 ${peopleInRoom.map(p => `- ${p.name} (${p.activity || p.state})${p.destination ? ` heading to ${p.destination}` : ''}`).join('\n')}
 
@@ -408,10 +417,11 @@ ${conversations}
 ${recentConvWarning}
 
 Should I say something? If so, to whom and what? Consider:
+- Does my CURRENT ACTIVITY naturally lead me to say something? (cooking → "dinner's almost ready", reading → "you should read this!", cleaning → "can someone help?")
 - Do I need information I don't have (like when's dinner)?
 - Should I greet someone who just arrived?
 - Should I comment on what someone else is doing?
-- Do I want to invite someone to do something together?
+- Do I want to invite someone to JOIN what I'm doing?
 - Or should I stay quiet and focus on my task?
 - Have I ALREADY been talking a lot? Maybe it's time to be quiet.`,
         options: { temperature: 0.6, max_tokens: 200, top_p: 0.9 },
@@ -584,7 +594,8 @@ ${conversationContext.from} said: "${conversationContext.lastText}" (${conversat
 
 ${moodNarrative}
 ${socialEnergyNarrative}
-What I'm currently doing: ${currentActionLabel}${nextIntentionHint}${emotionHint}
+What I was in the middle of: ${currentActionLabel}
+(${conversationContext.from} just spoke to me — am I glad for the company, mildly distracted, or annoyed at the interruption? Does being mid-task color how I respond?)${nextIntentionHint}${emotionHint}
 ${memoryNarrative}
 ${windDownHint}
 
@@ -752,7 +763,10 @@ appreciating a quiet moment. You plan in the background. You notice things but d
       agent: 'Reflector',
       icon: '💭',
       systemPrompt: `You ARE ${persona.fullName} (${persona.age}, ${persona.role}).
-You're doing something with your hands. Your mind wanders.
+You are currently: ${member.activityLabel || 'relaxing'}.
+Your mind wanders WHILE you do this — thoughts arise FROM the activity itself.
+What does this task feel like? What does it remind you of? Is it going well, frustrating, pleasant?
+The activity anchors your inner monologue. Let thoughts emerge from what you're physically doing.
 ${thoughtStyle}
 ${persona.quirks ? `Your quirks: ${persona.quirks.slice(0, 2).join('. ')}.` : ''}
 
@@ -769,8 +783,8 @@ Output valid JSON:
   "mood": "current emotion word",
   "emotionalShift": number between -10 and +10 (how this reflection changes your mood)
 }`,
-      userPrompt: `It's ${timeStr}. I'm doing: ${member.activityLabel || 'nothing'}
-${member.interactionTimer && member.interactionDuration ? `Progress: ${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done` : ''}
+      userPrompt: `It's ${timeStr}. I'm in the middle of: ${member.activityLabel || 'nothing in particular'}
+${member.interactionTimer && member.interactionDuration ? `Progress: ${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done — what crosses my mind while doing this?` : 'My hands are busy and my mind can wander.'}
 
 ${peopleInRoom.length > 0 ? `People nearby: ${peopleInRoom.map(p => `${p.name} (${p.activity || p.state})`).join(', ')}` : 'I am alone.'}
 ${perception.audible.length > 0 ? `I hear: ${perception.audible.map(s => s.description).join('; ')}` : ''}
