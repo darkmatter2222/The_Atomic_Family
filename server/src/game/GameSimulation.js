@@ -11,6 +11,7 @@
 const { createFamily, updateFamilyMember, commandFamilyMember, STATE } = require('./FamilyMemberAI');
 const { HOUSE_LAYOUT } = require('./HouseLayout');
 const AgenticEngine = require('./AgenticEngine');
+const { recordMemory } = require('./MemoryManager');
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ class GameSimulation {
       }
       if (hoursAwake > 0) {
         const { decayNeeds } = require('./InteractionData');
-        return { ...m, needs: decayNeeds(m.needs, hoursAwake, startHour) };
+        return { ...m, needs: decayNeeds(m.needs, hoursAwake, startHour, m.name) };
       }
       return m;
     });
@@ -237,6 +238,9 @@ class GameSimulation {
    * Strips out internal pathfinding arrays to save bandwidth.
    */
   serializeMember(m) {
+    // Attach persona state data for richer client display
+    const ps = this.agenticEngine.personaStates[m.name];
+
     return {
       name: m.name,
       role: m.role,
@@ -262,6 +266,13 @@ class GameSimulation {
         animation: m.currentInteraction.animation,
         furnitureId: m.currentInteraction.furnitureId,
       } : null,
+      // Persona state for richer UI (mood, thought bubble, speech bubble)
+      mood: ps?.mood || 'content',
+      moodIntensity: ps?.moodIntensity || 0.5,
+      stressLevel: ps?.stressLevel || 0,
+      lastThought: ps?.lastThought || null,
+      internalMonologue: ps?.internalMonologue || null,
+      activeSpeech: ps?.pendingSpeech || null,
     };
   }
 
@@ -447,8 +458,7 @@ class GameSimulation {
           this.family[i] = commandFamilyMember(this.family[i], sleepAction);
           const personaState = this.agenticEngine.personaStates[member.name];
           if (personaState) {
-            const { addMemory } = require('./PersonaManager');
-            addMemory(personaState, 'action', `Was sent to bed — past bedtime`, 3);
+            recordMemory(personaState, 'action', `Was sent to bed — past bedtime`, 'tired', { importance: 3 });
           }
           continue; // Skip the normal enforcement below
         }
@@ -472,8 +482,7 @@ class GameSimulation {
         // Add memory about going to bed
         const personaState = this.agenticEngine.personaStates[member.name];
         if (personaState) {
-          const { addMemory } = require('./PersonaManager');
-          addMemory(personaState, 'action', `Went to bed for the night`, 3);
+          recordMemory(personaState, 'action', `Went to bed for the night`, 'tired', { importance: 3 });
         }
       }
     }
@@ -518,8 +527,7 @@ class GameSimulation {
         // Add wake memory
         const personaState = this.agenticEngine.personaStates[member.name];
         if (personaState) {
-          const { addMemory } = require('./PersonaManager');
-          addMemory(personaState, 'action', `Woke up for the day`, 3);
+          recordMemory(personaState, 'action', `Woke up for the day`, 'contentment', { importance: 3 });
         }
       }
     }
@@ -662,9 +670,20 @@ class GameSimulation {
 
       if (resolved && resolved.valid) {
         // Apply via the agentic engine (speech, memory, lights, etc.)
-        this.agenticEngine.applyDecision(member.name, resolved, this.family, this.roomLights);
-        // Command the family member to perform the chosen interaction
-        this.family[i] = commandFamilyMember(this.family[i], resolved.action);
+        const accepted = this.agenticEngine.applyDecision(member.name, resolved, this.family, this.roomLights);
+        if (accepted === false) {
+          // Anti-repetition or other guard rejected — fallback to regular AI
+          this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
+          this.agenticEngine.stats.fallbackDecisions++;
+        } else {
+          // Command the family member to perform the chosen interaction
+          // For created actions, pass the full classified action data
+          if (resolved.isCreatedAction && resolved.createdActionData) {
+            this.family[i] = commandFamilyMember(this.family[i], resolved.action, resolved.createdActionData);
+          } else {
+            this.family[i] = commandFamilyMember(this.family[i], resolved.action);
+          }
+        }
       } else {
         // No valid decision — return to CHOOSING for regular AI fallback
         this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };

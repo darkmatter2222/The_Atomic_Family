@@ -37,6 +37,8 @@ const {
   serializePersonaState,
   getAllPersonaNames,
   resolveCharacterName,
+  updateDynamicRelationship,
+  tickDynamicRelationships,
   PERSONA_MAP,
 } = require('./PersonaManager');
 const {
@@ -48,6 +50,18 @@ const {
   getFilteredInteractions,
 } = require('./ReasoningPrompt');
 const { buildPerception } = require('./EnvironmentPerception');
+const { recordMemory, recordSocialMemory, processNewDay } = require('./MemoryManager');
+const {
+  isDueSummaryUpdate,
+  updateDailySummary,
+  queueRelationshipUpdate,
+  processRelationshipUpdates,
+  getAllRelationshipNarratives,
+  resetDailyTracking,
+  archiveDailySummaries,
+  isDuePatternExtraction,
+  extractLongTermPatterns,
+} = require('./DailySummaryManager');
 
 // ── Constants ─────────────────────────────────────────────────────
 const REASONING_TIMEOUT_MS = 25000;       // 25s real-time timeout per decision
@@ -118,6 +132,12 @@ class AgenticEngine {
     // Whether the engine is enabled
     this.enabled = true;
 
+    // ── Room time tracking (when each character entered their current room) ──
+    this.roomEntryTime = {};       // memberName → { room, enteredAt (Date.now()) }
+
+    // ── Speech deduplication — prevent background thinking parroting ──
+    this.recentSpeechTexts = [];   // [{ text, speaker, timestamp }] — global recent speech
+
     // ── Hourly reflection tracking ──
     this.lastReflectionHour = {};  // memberName → last hour reflected (0-23)
 
@@ -138,6 +158,7 @@ class AgenticEngine {
       this.thoughtLog[member.name] = [];
       this.tokenHistory[member.name] = [];
       this.tokenTotals[member.name] = 0;
+      this.roomEntryTime[member.name] = { room: member.currentRoom || 'living_room', enteredAt: Date.now() };
     }
     // Initialize SocialEngine per-character conversation state
     this.socialEngine.initializeCharacters(family);
@@ -165,7 +186,21 @@ class AgenticEngine {
     // Update moods for all characters
     for (const member of family) {
       if (this.personaStates[member.name]) {
+        // Set social context flag for social battery computation
+        const otherPeopleInRoom = family.filter(
+          f => f.name !== member.name && f.currentRoom === member.currentRoom && f.state !== 'SLEEPING'
+        );
+        this.personaStates[member.name]._currentlyWithPeople = otherPeopleInRoom.length > 0;
+
         updateMood(this.personaStates[member.name], member.needs);
+        // Tick dynamic relationship dimensions (patience recovery, sentiment drift)
+        tickDynamicRelationships(this.personaStates[member.name], 1.0 / 10); // ~10 tps
+
+        // ── Track room changes for room-time awareness ──
+        const roomEntry = this.roomEntryTime[member.name];
+        if (roomEntry && roomEntry.room !== member.currentRoom) {
+          this.roomEntryTime[member.name] = { room: member.currentRoom, enteredAt: Date.now() };
+        }
       }
     }
 
@@ -184,15 +219,20 @@ class AgenticEngine {
 
     // ── Conversation interrupts: force characters who were just spoken to
     //    into CHOOSING so they can reply through the LLM ──
-    //    GUARD: Only interrupt IDLE, PERFORMING, or WALKING characters.
+    //    GUARD: Only interrupt IDLE characters immediately.
+    //    PERFORMING/WALKING characters will naturally respond when their action
+    //    finishes and they enter CHOOSING on their own — the pendingReply
+    //    will be picked up then. This prevents the cascade:
+    //      interrupt → CHOOSING → new action → speech → interrupt → repeat
     //    Skip characters already in CHOOSING or THINKING (prevents spam).
     const needingResponse = this.socialEngine.getCharactersNeedingResponse();
     for (const resp of needingResponse) {
       const member = family.find(m => m.name === resp.name);
       if (!member) continue;
 
-      // Only interrupt if the character is NOT already handling a decision
-      if (member.state === 'performing' || member.state === 'walking' || member.state === 'idle') {
+      // Only interrupt IDLE characters immediately
+      // PERFORMING and WALKING characters keep their pendingReply and respond naturally
+      if (member.state === 'idle') {
         const idx = family.indexOf(member);
         if (idx >= 0) {
           // Force into CHOOSING so the next reasoning cycle picks up the conversation
@@ -223,9 +263,22 @@ class AgenticEngine {
             position: member.position,
           });
         }
+      } else if (member.state === 'choosing') {
+        // Already choosing — just make sure the conversation context is picked up
+        this.lastReasoningTime[resp.name] = 0;
+        this.socialEngine.markForceConsumed(resp.name);
+      } else if (member.state === 'walking' || member.state === 'performing') {
+        // Character is busy — convert forced interrupt to deferred reply.
+        // This gives them the LONGER timeout (45s instead of 15s) so they can
+        // finish their current activity and respond naturally when entering CHOOSING.
+        // Without this, the 15s forced timeout kills the reply before they arrive.
+        const convState = this.socialEngine.characterConvState?.[resp.name];
+        if (convState?.pendingReply) {
+          convState.pendingReply.forceInterrupt = false;  // 45s timeout now
+          convState.pendingReply._alreadyForced = true;   // stop retrying
+        }
       }
-      // If choosing/thinking: don't mark as consumed — retry next tick
-      // when the current reasoning cycle finishes
+      // If thinking: don't touch — they're mid-reasoning and will pick up on next cycle
     }
 
     // Generate daily agendas if needed
@@ -284,27 +337,36 @@ class AgenticEngine {
    */
   applyDecision(memberName, decision, family, roomLights) {
     const personaState = this.personaStates[memberName];
-    if (!personaState) return;
+    if (!personaState) return false;
 
     if (decision) {
       // ── Anti-repetition guard ──
-      // If the last 3 actions are the same as this one, reject and force fallback
-      const recent = personaState.recentInteractions?.slice(-3) || [];
-      if (recent.length >= 3 && recent.every(a => a === decision.action)) {
-        console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" 4th time in a row — rejected, forcing variety`);
+      // If the last action is the same as this one, reject and force fallback
+      // Created actions are unique by ID, so they naturally pass this check
+      const recent = personaState.recentInteractions?.slice(-1) || [];
+      if (recent.length >= 1 && recent[0] === decision.action && !decision.isCreatedAction) {
+        console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" 2nd time in a row — rejected, forcing variety`);
         // Still record the thought, but null the action so fallback AI picks
         personaState.lastThought = decision.thought;
         this.socialEngine.markResponded(memberName);
-        return; // Will cause fallback in GameSimulation
+        return false; // Tell GameSimulation to use fallback instead
       }
 
       personaState.lastThought = decision.thought;
-      personaState.currentGoal = decision.action;
+      personaState.currentGoal = decision.isCreatedAction ? decision.actionDescription : decision.action;
+
+      // ── Created action logging ──
+      if (decision.isCreatedAction) {
+        const { logCreatedAction } = require('./ActionClassifier');
+        logCreatedAction(memberName, decision.actionDescription, decision.createdActionData);
+        console.log(`[AgenticEngine] ${memberName} CREATED action: "${decision.actionDescription}" → ${decision.createdActionData.category} (${decision.createdActionData.icon})`);
+      }
 
       // ── Room validation guard ──
       // Ensure the chosen action belongs to the character's current room (or _any)
+      // For created actions, use the classified room instead
       const { INTERACTION_MAP } = require('./InteractionData');
-      const chosenInteraction = INTERACTION_MAP[decision.action];
+      const chosenInteraction = decision.isCreatedAction ? decision.createdActionData : INTERACTION_MAP[decision.action];
       const memberForRoom = family.find(m => m.name === memberName);
       if (chosenInteraction && memberForRoom) {
         const actionRoom = chosenInteraction.room;
@@ -325,6 +387,14 @@ class AgenticEngine {
       if (decision.speech) {
         const member = family.find(m => m.name === memberName);
         const room = member?.currentRoom || 'unknown';
+
+        // ── Navigation departure guard ──
+        // If leaving the room (go_to_*), suppress speech — you're about to walk away
+        if (decision.action && decision.action.startsWith('go_to_')) {
+          console.log(`[AgenticEngine] ${memberName} suppressed speech — leaving room (${decision.action})`);
+          decision.speech = null;
+          decision.speechTarget = null;
+        }
 
         // ── Alone-in-room guard ──
         // If nobody else is in the room, suppress speech entirely
@@ -362,9 +432,32 @@ class AgenticEngine {
             resolvedTarget = null;
             // Keep the speech as a general statement, just remove the target
           }
+
+          // ── Conversation cooldown guard ──
+          // Don't start new conversations with someone we just finished talking to
+          if (resolvedTarget && this.socialEngine.isPairOnCooldown(memberName, resolvedTarget)) {
+            console.log(`[AgenticEngine] ${memberName} tried to talk to ${resolvedTarget} but pair is on cooldown — stripped target`);
+            resolvedTarget = null;
+          }
         }
 
         // Final check — if speech still exists after guards
+        if (decision.speech) {
+          // ── Speech deduplication guard (for main pipeline too) ──
+          const normalizedSpeech = decision.speech.toLowerCase().trim();
+          const now = Date.now();
+          this.recentSpeechTexts = this.recentSpeechTexts.filter(s => now - s.timestamp < 300000);
+          const isDupeSpeech = this.recentSpeechTexts.some(s => s.text === normalizedSpeech);
+          if (isDupeSpeech) {
+            console.log(`[AgenticEngine] ${memberName} suppressed duplicate speech: "${decision.speech.substring(0, 50)}..."`);
+            decision.speech = null;
+            decision.speechTarget = null;
+            resolvedTarget = null;
+          } else {
+            this.recentSpeechTexts.push({ text: normalizedSpeech, speaker: memberName, timestamp: now });
+          }
+        }
+
         if (decision.speech) {
           personaState.pendingSpeech = {
             text: decision.speech,
@@ -377,6 +470,42 @@ class AgenticEngine {
             memberName, resolvedTarget, decision.speech,
             decision.emotion, room, this.personaStates, family
           );
+
+          // ── Record social memory for BOTH participants (asymmetric emotions) ──
+          if (resolvedTarget && this.personaStates[resolvedTarget]) {
+            recordSocialMemory(
+              personaState,
+              this.personaStates[resolvedTarget],
+              `${memberName} said to ${resolvedTarget}: "${decision.speech}"`,
+              decision.emotion || 'neutral',
+              'neutral', // target's emotion — will be updated when they respond
+              { location: room, importance: 3 }
+            );
+
+            // Update dynamic relationship dimension
+            const sentimentDelta = _speechSentiment(decision.speech, decision.emotion);
+            updateDynamicRelationship(personaState, resolvedTarget, sentimentDelta);
+            updateDynamicRelationship(this.personaStates[resolvedTarget], memberName, sentimentDelta * 0.5);
+
+            // Queue relationship narrative updates for both participants
+            queueRelationshipUpdate(memberName, resolvedTarget, {
+              interaction: `${memberName} said: "${decision.speech}"`,
+              emotion: decision.emotion || 'neutral',
+              conversationSnippet: decision.speech,
+            });
+            queueRelationshipUpdate(resolvedTarget, memberName, {
+              interaction: `${memberName} said to me: "${decision.speech}"`,
+              emotion: 'neutral',
+              conversationSnippet: decision.speech,
+            });
+          } else {
+            // Speech to nobody specific or general statement
+            recordMemory(personaState, 'action',
+              `Said aloud: "${decision.speech}"`,
+              decision.emotion || 'neutral',
+              { location: room, importance: 2 }
+            );
+          }
         } else {
           personaState.pendingSpeech = null;
         }
@@ -395,15 +524,59 @@ class AgenticEngine {
           const currentRoom = member.currentRoom;
           if (decision.lightAction === 'on' && roomLights[currentRoom] === false) {
             roomLights[currentRoom] = true;
-            addMemory(personaState, 'action', `Turned on the light in ${currentRoom}`, 1);
+            recordMemory(personaState, 'action', `Turned on the light in ${currentRoom}`, 'neutral', { location: currentRoom, importance: 1 });
           } else if (decision.lightAction === 'off' && roomLights[currentRoom] === true) {
             roomLights[currentRoom] = false;
-            addMemory(personaState, 'action', `Turned off the light in ${currentRoom}`, 1);
+            recordMemory(personaState, 'action', `Turned off the light in ${currentRoom}`, 'neutral', { location: currentRoom, importance: 1 });
           }
         }
       }
 
       personaState.mood = decision.emotion || personaState.mood;
+
+      // ── Enhanced output fields (per goals.md Principle 5) ──
+      // Store details as enriched activity description
+      if (decision.details) {
+        personaState.currentActivityDetails = decision.details;
+      }
+      // Store speech tone for future rendering
+      if (decision.speechTone && personaState.pendingSpeech) {
+        personaState.pendingSpeech.tone = decision.speechTone;
+      }
+      // Apply emotional shift to mood intensity
+      if (decision.emotionalShift && decision.emotionalShift !== 0) {
+        const shift = decision.emotionalShift / 100; // Normalize -20..+20 to -0.2..+0.2
+        personaState.moodIntensity = Math.max(0, Math.min(1, 
+          (personaState.moodIntensity || 0.5) + shift
+        ));
+        // Large negative shifts increase stress
+        if (decision.emotionalShift < -5) {
+          personaState.stressLevel = Math.min(1,
+            (personaState.stressLevel || 0) + Math.abs(shift) * 0.5
+          );
+        }
+      }
+
+      // ── Emotional Cascade Buffer (per goals.md Step 5) ──
+      // Rolling buffer of recent emotional shifts — feeds into next Deliberator as cumulative emotional context
+      if (!personaState.emotionalCascadeBuffer) personaState.emotionalCascadeBuffer = [];
+      const cascadeEntry = {
+        shift: decision.emotionalShift || 0,
+        emotion: decision.emotion || personaState.mood || 'neutral',
+        reason: decision.thought || decision.details || decision.action || 'unknown',
+        action: decision.action || null,
+        timestamp: Date.now(),
+      };
+      personaState.emotionalCascadeBuffer.push(cascadeEntry);
+      // Keep only last 12 entries (roughly 2-3 game hours of decisions)
+      if (personaState.emotionalCascadeBuffer.length > 12) {
+        personaState.emotionalCascadeBuffer = personaState.emotionalCascadeBuffer.slice(-12);
+      }
+      // Store next intention for future pipeline context
+      if (decision.nextIntention) {
+        personaState.nextIntention = decision.nextIntention;
+      }
+
       this.stats.llmDecisions++;
     } else {
       // No valid decision — also clear pending conversation state
@@ -411,6 +584,7 @@ class AgenticEngine {
     }
 
     this.stats.totalDecisions++;
+    return true; // Decision accepted
   }
 
   /**
@@ -428,6 +602,9 @@ class AgenticEngine {
 
     const personaState = this.personaStates[name];
     if (!personaState) return;
+
+    // Attach room time info so the pipeline can access it
+    personaState._roomTimeMinutes = this.getRoomTimeMinutes(name);
 
     const agenda = this.agendas[name];
     const conversationContext = this.socialEngine.getConversationContext(name);
@@ -469,7 +646,10 @@ class AgenticEngine {
       });
 
       if (result.finalDecision && result.finalDecision.valid) {
-        console.log(`[AgenticEngine] ${name} decided: ${result.finalDecision.action} ("${result.finalDecision.thought}") [${stageCount} stages: ${stageNames}] [${elapsed}ms] [~${totalTokens} tok]`);
+        const actionLabel = result.finalDecision.isCreatedAction
+          ? `CREATED: "${result.finalDecision.actionDescription}" (${result.finalDecision.createdActionData?.category})`
+          : result.finalDecision.action;
+        console.log(`[AgenticEngine] ${name} decided: ${actionLabel} ("${result.finalDecision.thought}") [${stageCount} stages: ${stageNames}] [${elapsed}ms] [~${totalTokens} tok]`);
         return result.finalDecision;
       } else {
         console.log(`[AgenticEngine] ${name} pipeline produced invalid/no decision [${stageCount} stages] [${elapsed}ms] — falling back`);
@@ -562,6 +742,29 @@ class AgenticEngine {
             personaState.mood = bg.mood;
           }
 
+          // ── Emotional shift from reflection → cascade buffer ──
+          if (bg.emotionalShift && bg.emotionalShift !== 0) {
+            const shiftMagnitude = Math.abs(bg.emotionalShift) / 20; // Normalize to 0-0.5 range (half weight of actions)
+            if (bg.emotionalShift > 0) {
+              personaState.moodIntensity = Math.min(1, (personaState.moodIntensity || 0.5) + shiftMagnitude * 0.3);
+              personaState.stressLevel = Math.max(0, (personaState.stressLevel || 0) - shiftMagnitude * 0.2);
+            } else {
+              personaState.stressLevel = Math.min(1, (personaState.stressLevel || 0) + shiftMagnitude * 0.3);
+              personaState.moodIntensity = Math.max(0, (personaState.moodIntensity || 0.5) - shiftMagnitude * 0.2);
+            }
+            // Add to emotional cascade buffer
+            if (!personaState.emotionalCascadeBuffer) personaState.emotionalCascadeBuffer = [];
+            personaState.emotionalCascadeBuffer.push({
+              action: `reflecting while ${member.activityLabel || 'idle'}`,
+              emotion: bg.mood || 'content',
+              shift: bg.emotionalShift,
+              timestamp: Date.now(),
+            });
+            if (personaState.emotionalCascadeBuffer.length > 12) {
+              personaState.emotionalCascadeBuffer.shift();
+            }
+          }
+
           // Handle spontaneous speech
           if (bg.wantToSpeak && bg.speech && bg.speechTarget) {
             const room = member.currentRoom;
@@ -569,7 +772,21 @@ class AgenticEngine {
 
             // Only speak if target is actually in the room
             const targetInRoom = othersInRoom.some(m => m.name === bg.speechTarget);
-            if (targetInRoom) {
+
+            // Check conversation cooldown — don't start new conversations via background think
+            const onCooldown = this.socialEngine.isPairOnCooldown(member.name, bg.speechTarget);
+
+            // ── Speech deduplication — prevent parroting the same line repeatedly ──
+            const normalizedSpeech = bg.speech.toLowerCase().trim();
+            const now = Date.now();
+            // Expire old entries (older than 5 minutes)
+            this.recentSpeechTexts = this.recentSpeechTexts.filter(s => now - s.timestamp < 300000);
+            const isDuplicate = this.recentSpeechTexts.some(s => s.text === normalizedSpeech);
+
+            if (targetInRoom && !onCooldown && !isDuplicate) {
+              // Record this speech for deduplication
+              this.recentSpeechTexts.push({ text: normalizedSpeech, speaker: member.name, timestamp: now });
+
               personaState.pendingSpeech = {
                 text: bg.speech,
                 target: bg.speechTarget,
@@ -597,6 +814,31 @@ class AgenticEngine {
       });
 
       this.pendingBackgroundThinks.set(member.name, bgPromise);
+    }
+
+    // ── Periodic daily summary updates (every 30 game minutes per character) ──
+    this._checkDailySummaryUpdates(family, gameTime);
+
+    // ── Process pending relationship narrative updates ──
+    processRelationshipUpdates(this.personaStates, this.llmClient, gameTime);
+  }
+
+  /**
+   * Check if any character is due for a daily summary narrative update.
+   * Runs one update at a time to avoid LLM overload.
+   */
+  _checkDailySummaryUpdates(family, gameTime) {
+    for (const member of family) {
+      const personaState = this.personaStates[member.name];
+      if (!personaState) continue;
+
+      // Only update if due and not sleeping
+      if (member.activityLabel && member.activityLabel.toLowerCase().includes('sleep')) continue;
+
+      if (isDueSummaryUpdate(member.name, gameTime)) {
+        updateDailySummary(member, personaState, gameTime, this.llmClient);
+        return; // Only start one per tick cycle to preserve LLM bandwidth
+      }
     }
   }
 
@@ -646,7 +888,7 @@ class AgenticEngine {
       const startTime = Date.now();
 
       const rawResponse = await this.llmClient.reason(systemPrompt, agendaPrompt, {
-        temperature: 0.8,
+        temperature: 0.7,
         max_tokens: 600,
         top_p: 0.9,
       });
@@ -808,18 +1050,41 @@ class AgenticEngine {
   /**
    * Reset daily logs at the start of a new day.
    * This ensures buildDailySummary starts fresh each day.
+   * Archives Tier 2+3 narratives for Tier 4 pattern extraction before clearing.
    */
   _resetDailyLogsIfNewDay(gameTime) {
     const { resetDailyLog } = require('./PersonaManager');
     const dayKey = gameTime.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
 
     if (this.lastDayKey && this.lastDayKey !== dayKey) {
-      // New day — reset all daily logs
+      // Build a human-readable day label from the PREVIOUS day (the one we're archiving)
+      const prevDayLabel = this.lastDayKey; // e.g. "6/15/2025"
+
+      // New day — archive BEFORE clearing, then reset
       for (const [name, personaState] of Object.entries(this.personaStates)) {
+        // ── Tier 4: Archive daily + relationship narratives before clearing ──
+        archiveDailySummaries(personaState, prevDayLabel);
+
+        // ── Tier 4: Extract long-term patterns if enough days archived ──
+        if (isDuePatternExtraction(personaState) && this.llmClient?.available) {
+          const member = this.family.find(m => m.name === name);
+          if (member) {
+            // Fire-and-forget: pattern extraction is background work
+            extractLongTermPatterns(member, personaState, this.llmClient)
+              .catch(err => console.error(`[LongTermMemory] Pattern extraction failed for ${name}: ${err.message}`));
+          }
+        }
+
         resetDailyLog(personaState);
-        addMemory(personaState, 'thought', `A new day has begun.`, 3);
+        processNewDay(personaState); // MemoryManager: keep only emotionally significant overnight memories
+        recordMemory(personaState, 'thought', `A new day has begun.`, 'contentment', { importance: 3 });
+        // Reset daily summary narrative for the new day
+        personaState.dailySummaryNarrative = null;
+        personaState.relationshipNarratives = {};
+        personaState.emotionalCascadeBuffer = []; // Reset emotional cascade for new day
+        resetDailyTracking(name);
       }
-      console.log(`[AgenticEngine] New day detected (${dayKey}), daily logs reset`);
+      console.log(`[AgenticEngine] New day detected (${dayKey}), daily logs reset, Tier 4 archives updated, overnight memory processed`);
     }
     this.lastDayKey = dayKey;
   }
@@ -1024,6 +1289,15 @@ class AgenticEngine {
     return this.personaStates[memberName] || null;
   }
 
+  /**
+   * Get how many real-time minutes a character has been in their current room.
+   */
+  getRoomTimeMinutes(memberName) {
+    const entry = this.roomEntryTime[memberName];
+    if (!entry) return 0;
+    return (Date.now() - entry.enteredAt) / 60000;
+  }
+
   setEnabled(enabled) {
     this.enabled = !!enabled;
     console.log(`[AgenticEngine] ${this.enabled ? 'Enabled' : 'Disabled'}`);
@@ -1036,6 +1310,28 @@ class AgenticEngine {
         ? elapsed
         : this.stats.avgReasoningTimeMs * (1 - alpha) + elapsed * alpha;
   }
+}
+
+/**
+ * Estimate the sentiment of a speech act from emotion tag and text content.
+ * Returns a value between -1 (hostile) and +1 (loving/warm).
+ */
+function _speechSentiment(text, emotion) {
+  const positiveEmotions = { happy: 0.5, cheerful: 0.5, love: 0.8, grateful: 0.6, proud: 0.5, amused: 0.3, caring: 0.6 };
+  const negativeEmotions = { angry: -0.7, frustrated: -0.5, annoyed: -0.4, sad: -0.2, worried: -0.1, disappointed: -0.4, sarcastic: -0.3 };
+
+  let sentiment = positiveEmotions[emotion] || negativeEmotions[emotion] || 0;
+
+  // Simple text-based adjustments
+  if (text) {
+    const lower = text.toLowerCase();
+    if (lower.includes('love you') || lower.includes('thank')) sentiment += 0.3;
+    if (lower.includes('sorry')) sentiment += 0.1;
+    if (lower.includes('shut up') || lower.includes('hate') || lower.includes('stupid')) sentiment -= 0.4;
+    if (lower.includes('!')) sentiment *= 1.1; // emphasis amplifies
+  }
+
+  return Math.max(-1, Math.min(1, sentiment));
 }
 
 module.exports = AgenticEngine;

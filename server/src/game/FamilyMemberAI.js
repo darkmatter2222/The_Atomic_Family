@@ -10,7 +10,7 @@
  */
 
 const { findPath, smoothPath } = require('./Pathfinding');
-const { createWalkableGrid, worldToGrid, getRandomWalkablePosition, getRoomAtPosition, HOUSE_LAYOUT } = require('./HouseLayout');
+const { createWalkableGrid, worldToGrid, getRandomWalkablePosition, getRandomPositionInRoom, getRoomAtPosition, HOUSE_LAYOUT } = require('./HouseLayout');
 const {
   INTERACTION_CATALOG,
   INTERACTION_MAP,
@@ -227,7 +227,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
 
   const gameHoursElapsed = deltaTime / 3600;
   if (gameHoursElapsed > 0) {
-    updated.needs = decayNeeds(updated.needs, gameHoursElapsed, gameHour);
+    updated.needs = decayNeeds(updated.needs, gameHoursElapsed, gameHour, updated.name);
   }
 
   switch (updated.state) {
@@ -316,6 +316,16 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
     case STATE.WALKING: {
       if (updated.pathIndex >= updated.path.length) {
         if (updated.currentInteraction) {
+          // Transit actions (go_to_*) skip PERFORMING — go directly to CHOOSING in new room
+          if (updated.currentInteraction.category === 'transit') {
+            updated.state = STATE.CHOOSING;
+            updated.currentInteraction = null;
+            updated.activityLabel = null;
+            updated.activityAnim = null;
+            updated.idleTimer = 0;
+            updated.animFrame = 0;
+            break;
+          }
           if (updated.targetFurniture) {
             const snapped = snapToFurnitureCenter(updated.position, updated.targetFurniture);
             updated.position = snapped;
@@ -472,7 +482,60 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
 /**
  * Command a family member to perform a specific interaction.
  */
-function commandFamilyMember(member, interactionId) {
+function commandFamilyMember(member, interactionId, createdActionData) {
+  // ── Handle dynamic navigation actions (go_to_[room]) ──
+  if (interactionId && interactionId.startsWith('go_to_')) {
+    const targetRoom = interactionId.replace('go_to_', '');
+    const dest = getRandomPositionInRoom(targetRoom);
+    if (!dest) return member;
+
+    const updated = { ...member };
+    updated.position = { ...updated.position, y: 0 };
+
+    const startGrid = worldToGrid(updated.position.x, updated.position.z, gridData);
+    const endGrid = worldToGrid(dest.x, dest.z, gridData);
+    const rawPath = findPath(gridData.grid, startGrid, endGrid);
+
+    if (rawPath.length > 1) {
+      updated.path = smoothPath(rawPath, gridData);
+      updated.pathIndex = 0;
+      updated.currentInteraction = {
+        id: interactionId,
+        label: `Walking to ${targetRoom.replace(/_/g, ' ')}`,
+        room: targetRoom,
+        category: 'transit',
+        animation: 'walk',
+        duration: { min: 0, max: 1 },
+        needsEffects: {},
+      };
+      updated.activityLabel = `Walking to ${targetRoom.replace(/_/g, ' ')}`;
+      updated.activityAnim = 'walk';
+      updated.targetFurniture = null;
+      updated.state = STATE.WALKING;
+    } else {
+      // Already in or near the target room — just go idle
+      updated.state = STATE.CHOOSING;
+      updated.idleTimer = 0;
+    }
+
+    return updated;
+  }
+
+  // ── Handle created actions (from createAction()) ──
+  if (createdActionData && createdActionData.isCreatedAction) {
+    const updated = { ...member };
+    updated.position = { ...updated.position, y: 0 };
+    updated.currentInteraction = createdActionData;
+    updated.interactionTimer = 0;
+    updated.interactionDuration = rollDuration(createdActionData) * 60;
+    updated.activityLabel = createdActionData.label;
+    updated.activityAnim = createdActionData.animation || 'use';
+    updated.targetFurniture = null;
+    updated.state = STATE.PERFORMING;
+    updated.effectsApplied = 0;
+    return updated;
+  }
+
   const interaction = INTERACTION_MAP[interactionId];
   if (!interaction) return member;
 

@@ -21,7 +21,7 @@ const {
   ENVIRONMENT_RULES,
 } = require('./PersonaManager');
 
-const { buildPerception, getTimeOfDayLabel } = require('./EnvironmentPerception');
+const { buildPerception, getTimeOfDayLabel, narratePerception } = require('./EnvironmentPerception');
 
 const {
   getInteractionsForRole,
@@ -29,73 +29,100 @@ const {
   getCriticalNeeds,
 } = require('./InteractionData');
 
+// ── New Narrator Modules ────────────────────────────────────────
+const { narrateNeeds, narrateMood } = require('./NeedsNarrator');
+const { narrateSkills } = require('./SkillsNarrator');
+const { narrateRelationships } = require('./RelationshipNarrator');
+const { narrateMemories, getMemoriesInvolving } = require('./MemoryManager');
+
 /**
  * Build the system prompt — character identity and behavioral rules.
  * This stays relatively stable between calls for the same character.
+ *
+ * UPGRADED: You ARE the character, not "analyzing" one.
+ * Personality-first, anti-optimization, human-authentic.
  */
 function buildSystemPrompt(memberName) {
   const persona = getPersona(memberName);
   if (!persona) return 'You are a family member in a house simulation.';
 
-  return `You are the inner mind of ${persona.fullName}, a ${persona.age}-year-old ${persona.gender} (${persona.role}) in the Atomic family household.
+  // Build quirk string
+  const quirks = persona.quirks?.slice(0, 3).join(' ') || '';
 
-PERSONALITY: ${persona.personality.summary}
-TRAITS: ${persona.traits.join(', ')}
-VALUES: ${persona.values.join(', ')}
-LIKES: ${persona.likes.slice(0, 6).join(', ')}
-DISLIKES: ${persona.dislikes.slice(0, 5).join(', ')}
-SPEECH STYLE: ${persona.speechStyle}
+  return `You ARE ${persona.fullName}. You are ${persona.age} years old. You are the ${persona.role} of the Atomic family.
 
-HOUSE RULES:
-${FAMILY_DATA.houseRules.slice(0, 10).map(r => `- ${r}`).join('\n')}
+WHO YOU ARE:
+${persona.bio}
 
-IMPORTANT BEHAVIORAL RULES:
+YOUR PERSONALITY: ${persona.personality.summary}
+YOUR TRAITS: ${persona.traits.join(', ')}
+YOUR VALUES: ${persona.values.join(', ')}
+THINGS YOU LIKE: ${persona.likes.slice(0, 6).join(', ')}
+THINGS YOU DISLIKE: ${persona.dislikes.slice(0, 5).join(', ')}
+
+YOUR QUIRKS: ${quirks}
+
+HOW YOU TALK: ${persona.speechStyle}
+${persona.catchPhrases ? `THINGS YOU TEND TO SAY: ${persona.catchPhrases.slice(0, 4).join(' | ')}` : ''}
+
+IMPORTANT — YOU ARE A PERSON, NOT AN AI:
+- You do NOT optimize. You do NOT strategize. You make human decisions.
+- Sometimes you pick the "wrong" thing because it feels right. That's authentic.
+- You have moods that color everything. A bad mood makes even good options feel unappealing.
+- You can be irrational, stubborn, lazy, impulsive, or overly cautious. That's human.
+- You don't always know what you want. Sometimes you just... exist.
+${getCharacterQuirks(memberName)}
+
+HOUSE RULES (you know these but don't always follow them perfectly):
+${FAMILY_DATA.houseRules.slice(0, 8).map(r => `- ${r}`).join('\n')}
+
+BEHAVORIAL CONSTRAINTS:
 - You MUST respond with ONLY valid JSON — no other text.
-- Think about what ${persona.name} would realistically do at this moment.
-- Consider your needs, schedule, time of day, and who's around.
-- Respect social norms: don't enter an occupied bathroom, don't mow the lawn at night, use indoor voices.
-- If someone spoke to you recently, acknowledge it in your decision.
-- You can ONLY see and talk to people in the SAME room as you. Do not address people in other rooms.
-- If you want to talk to someone in another room, walk there first (pick an action in their room).
+- You can ONLY see and talk to people in the SAME room as you.
+- If you want to talk to someone elsewhere, walk there first.
 - ${persona.age < 10 ? 'You need adult supervision for swimming and the kitchen stove.' : ''}
-- ${persona.role === 'father' || persona.role === 'mother' ? 'You are a parent with authority. Monitor kids\' safety and enforce rules.' : ''}
-- Turn off lights when you leave a room if you are the last person.
-- Don't repeat yourself. Vary your activities and speech.`;
+- ${persona.role === 'father' || persona.role === 'mother' ? 'You are a parent. You care about safety and rules, but you\'re also tired sometimes.' : ''}
+- Turn off lights when leaving a room if you're the last person.
+- Don't repeat the same action or conversation. Vary naturally.`;
 }
 
 /**
  * Build the user prompt — current situation and available actions.
  * This changes every reasoning cycle.
+ *
+ * UPGRADED: Uses personality-filtered narration instead of raw numbers.
+ * The LLM never sees "hunger: 28%". It sees "Your stomach is growling..."
  */
 function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState, recentEvents = [], agenda = null, conversationContext = null) {
   const persona = getPersona(member.name);
   const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents);
   const schedule = getCurrentScheduleEntry(member.name, gameTime);
-  const memories = buildMemorySummary(personaState);
   const conversations = buildConversationSummary(personaState);
   const dailySummary = buildDailySummary(personaState);
 
-  // Get available interactions
-  const availableInteractions = getFilteredInteractions(member.role, gameTime, perception);
+  // ── Personality-filtered narration ──
+  const percNarrative = narratePerception(perception, member.name);
+  const needsNarrative = narrateNeeds(member.name, member.needs, perception.environment.hour);
+  const moodNarrative = narrateMood(member.name, personaState.mood, personaState.stressLevel);
+  const memoryNarrative = narrateMemories(personaState, 8);
+  const skillsNarrative = narrateSkills(member.name, personaState.skills || {});
+
+  // ── Build family location awareness (who's where in the house) ──
+  const familyLocationStr = buildFamilyLocationAwareness(member, allMembers);
+
+  // Get available interactions (with navigation and anti-repetition)
+  const recentActions = personaState.recentInteractions?.slice(-15) || [];
+  const availableInteractions = getFilteredInteractions(member.role, gameTime, perception, allMembers, recentActions);
 
   // ── Sort interactions: needs-addressing actions first ──
-  // Actions that restore critical needs get priority in the list
-  const urgentNeeds = getCriticalNeeds(member.needs, 40); // threshold 40 = somewhat urgent
+  const urgentNeeds = getCriticalNeeds(member.needs, 40);
   const urgentKeys = new Set(urgentNeeds.map(n => n.key));
 
   const sortedInteractions = [...availableInteractions].sort((a, b) => {
-    // Score: how much does this action help critical needs?
     const scoreA = getNeedsScore(a, urgentKeys);
     const scoreB = getNeedsScore(b, urgentKeys);
-    return scoreB - scoreA; // Higher score = more helpful = earlier in list
+    return scoreB - scoreA;
   });
-
-  // Format needs
-  const needsStr = formatNeeds(member.needs);
-  const criticalNeeds = getCriticalNeeds(member.needs, 25);
-  const criticalStr = criticalNeeds.length > 0
-    ? `⚠ CRITICAL NEEDS: ${criticalNeeds.map(n => `${n.key} (${Math.round(n.value)}%)`).join(', ')}`
-    : 'All needs are okay.';
 
   // Format time
   const timeStr = gameTime.toLocaleTimeString('en-US', {
@@ -109,42 +136,36 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
     timeZone: 'America/New_York'
   });
 
-  // Format visible people
-  const peopleSeen = perception.visible.peopleInRoom.length > 0
-    ? perception.visible.peopleInRoom.map(p => {
-        let desc = `${p.name} (${p.activity || p.state})`;
-        if (p.destination && p.state === 'walking') {
-          desc = `${p.name} (walking toward ${p.destination})`;
-        }
-        return desc;
-      }).join(', ')
-    : 'Nobody else here.';
-
-  // Format sounds
-  const soundsHeard = perception.audible.length > 0
-    ? perception.audible.map(s => s.description).join('; ')
-    : 'Nothing unusual.';
-
   // Format schedule
   const scheduleStr = schedule
     ? `Current: ${schedule.current.activity}${schedule.next ? ` | Next: ${schedule.next.time} — ${schedule.next.activity}` : ''}`
     : 'No schedule entry.';
 
-  // Format interactions as numbered list (IDs only, no numbering in the value)
-  const interactionList = sortedInteractions
-    .slice(0, 20) // limit to 20 options for smaller model
+  // Format interactions as numbered list — separate room actions from navigation
+  const roomActions = sortedInteractions.filter(i => !i._isNavigation);
+  const navActions = sortedInteractions.filter(i => i._isNavigation);
+
+  const roomActionList = roomActions
+    .slice(0, 18)
     .map((ia, i) => `${i + 1}. ${ia.id} — ${ia.label} (${ia.category}, ${ia.duration.min}-${ia.duration.max}min)`)
     .join('\n');
 
-  // Build anti-repetition context — stronger, tracks last 5
-  const recentActions = personaState.recentInteractions?.slice(-5) || [];
+  const navActionList = navActions.length > 0
+    ? '\n\n### Go Somewhere Else\n' + navActions
+        .map((ia, i) => `${roomActions.length + i + 1}. ${ia.id} — ${ia.label}`)
+        .join('\n')
+    : '';
+
+  const interactionList = roomActionList + navActionList;
+
+  // Anti-repetition context (use the already-computed recentActions from above)
   const recentActionsStr = recentActions.length > 0
-    ? `⚠ AVOID REPEATING: ${recentActions.join(', ')} — You just did these! Pick something DIFFERENT!`
+    ? `⚠ AVOID REPEATING: ${[...new Set(recentActions.slice(-5))].join(', ')} — You just did these! Pick something DIFFERENT! Variety is human.`
     : '';
 
   // Dark room warning
   const darkRoomWarning = perception.environment.isDark
-    ? `\n⚠ THIS ROOM IS DARK! Lights are off. Set lightAction to "on" before doing anything, or move to a lit room.`
+    ? `\n⚠ THIS ROOM IS DARK! Set lightAction to "on" before doing anything, or move to a lit room.`
     : '';
 
   // Current activity elapsed time context
@@ -165,37 +186,45 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
   // Parent engagement hints
   const parentHints = getParentEngagementHints(member, perception);
 
-  return `## Current Situation
-TIME: ${dayStr}, ${timeStr} (${perception.environment.timeOfDay})
-LOCATION: ${perception.visible.roomName}${!currentRoomLit ? ' ⚠ DARK — lights are off!' : ''}
-MOOD: ${personaState.mood} (stress: ${Math.round(personaState.stressLevel * 100)}%)
+  // Relationship context for people in room
+  const peopleInRoom = perception.visible.peopleInRoom;
+  const relationshipData = persona.relationships || {};
+  const recentEventsMap = {};
+  for (const p of peopleInRoom) {
+    recentEventsMap[p.name] = getMemoriesInvolving(personaState, p.name, 60);
+  }
+  const relationshipNarrative = peopleInRoom.length > 0
+    ? narrateRelationships(member.name, relationshipData, recentEventsMap, perception.environment.hour)
+    : '';
+
+  return `## Where You Are & What You Perceive
+${percNarrative}
 ${member.activityLabel ? `CURRENTLY DOING: ${member.activityLabel}${elapsedStr}` : 'CURRENTLY: idle'}
-
-## My Needs (0=desperate, 100=full)
-${needsStr}
-${criticalStr}
-
-## What I See
-Room: ${perception.visible.roomName}${perception.environment.isDark ? ' (dark — lights are off)' : ''}
-People here: ${peopleSeen}
 Nearby room lights: ${lightStatus}
 Bathroom occupied: ${perception.environment.bathroomOccupied ? 'Yes' : 'No'}
-Sleeping family: ${perception.environment.sleepingMembers.length > 0 ? perception.environment.sleepingMembers.join(', ') : 'Nobody sleeping'}
+
+## How You Feel
+${needsNarrative}
+
+${moodNarrative}
+
+${skillsNarrative ? `## What You're Good At\n${skillsNarrative}` : ''}
+
+${relationshipNarrative ? `## Your Family (who\'s here)\n${relationshipNarrative}` : ''}
+
+${familyLocationStr ? `## Where Everyone Is\n${familyLocationStr}` : ''}
 
 ${buildConversationResponseSection(conversationContext)}
 
-## What I Hear
-${soundsHeard}
+## Your Thoughts
+${memoryNarrative}
 
-## My Schedule
+## Your Schedule
 ${scheduleStr}
 ${schedule?.isWeekend ? '(Weekend)' : '(Weekday)'}
 
-## What I've Done Today
+## What You've Done Today
 ${dailySummary}
-
-## Recent Memory
-${memories}
 
 ## Recent Conversations
 ${conversations}
@@ -214,40 +243,36 @@ ${parentHints}
 ${interactionList}
 
 ## Instructions
-Decide what to do next. Think carefully:
-1. Your most pressing needs (eat if hungry, sleep if tired, bathroom if urgent)
-2. The current time — be conscious of how much time you have before your next scheduled activity
-3. How long the activity will take — don't start a 30min task if dinner is in 10 minutes
-4. Your plan for the day — what have you done, what's next on your agenda?
-5. Social context — who's around, what they're doing
-6. Recent conversations — RESPOND to people who spoke to you! This is your HIGHEST priority.
-7. Should you say something to someone nearby? Be social and expressive!
-8. Room lighting — turn on lights if the room is dark before doing anything!
+Decide what to do next. Think as YOURSELF — first person, authentic, human.
+Don't optimize. Don't strategize. Just... be yourself.
 
-CRITICAL CONVERSATION RULES:
-- You can ONLY talk to people who are listed in "People here" above. They must be IN YOUR ROOM.
-- Do NOT talk to people who are not in the same room. You cannot see or hear them.
-- If someone just spoke TO you (see Active Conversation above), you MUST reply with speech directed at them.
-- Set speechTarget to the exact NAME of the person (e.g., "Dad", "Mom", "Emma", "Lily", "Jack").
-- Have natural back-and-forth conversations — ask follow-up questions, react to what they said.
-- If nobody is in the room with you, set speech to null and speechTarget to null.
-- Do NOT target someone in a different room. Only target people listed in "People here".
-- Express your personality through how you speak!
+Consider naturally:
+1. How your body feels — eat if hungry, sleep if tired, bathroom if urgent
+2. What time it is — don't start a long task if dinner is soon
+3. Who's around — social opportunities, parenting moments, or need for solitude
+4. Recent conversations — RESPOND to people who spoke to you (HIGHEST priority)
+5. What you actually WANT to do vs what you SHOULD do (these often conflict)
+6. Room lighting — turn on lights if dark
+
+CONVERSATION RULES:
+- You can ONLY talk to people in "People here" — they must be IN YOUR ROOM.
+- If someone just spoke TO you, you MUST reply with speech directed at them.
+- Set speechTarget to the exact NAME (e.g., "Dad", "Mom", "Emma", "Lily", "Jack").
+- If nobody is here, set speech to null and speechTarget to null.
+- Have natural conversations — ask questions, react, be authentic.
+- Express YOUR personality through how you speak!
 
 LIGHT RULES:
-- Set lightAction to "on" ONLY if the room is dark and you need light for your activity.
-- Set lightAction to "off" ONLY if you are the LAST person leaving the room (nobody else listed here).
-- If lights are already on, set lightAction to null.
-- If lights are already off and you don't need them, set lightAction to null.
-
-VARIETY: Don't repeat the same action or speech you just did. Try different activities!
+- Set lightAction to "on" if the room is dark and you need light.
+- Set lightAction to "off" if you're the LAST person leaving.
+- Otherwise set lightAction to null.
 
 Respond with ONLY this JSON (no other text):
 {
-  "thought": "2-3 sentence internal reasoning about your decision",
-  "action": "interaction_id from the list above (JUST the id, not the number)",
+  "thought": "2-3 sentence internal reasoning — think as yourself",
+  "action": "interaction_id from the list above (JUST the id)",
   "speech": "what you say out loud, or null if silent",
-  "speechTarget": "name of person you're addressing (must be in your room), or null",
+  "speechTarget": "name of person you're addressing, or null",
   "emotion": "current emotion word",
   "lightAction": "on" or "off" or null
 }`;
@@ -278,13 +303,71 @@ ${conversationContext.from} said: "${conversationContext.lastText}" (${conversat
 
 /**
  * Get interactions filtered by role, time, room, and environmental constraints.
- * CRITICAL FIX: Only show interactions available in the character's CURRENT room
- * (plus _any room actions). Characters must walk to another room to access
- * its interactions — they shouldn't see kitchen actions from a bedroom.
+ *
+ * Room-based filtering: Only shows interactions from the character's CURRENT room
+ * (plus _any room actions). But ALSO generates dynamic "go_to_[room]" navigation
+ * actions so characters can move purposefully to other rooms.
+/**
+ * Character-specific behavioral tendencies that make each person
+ * "suboptimal" in unique, authentic ways. These override the LLM's
+ * tendency to always pick the globally optimal action.
  */
-function getFilteredInteractions(role, gameTime, perception) {
+function getCharacterQuirks(name) {
+  const quirks = {
+    Dad: `
+YOUR SPECIFIC TENDENCIES (these are YOU, not bugs):
+- You NEED coffee in the morning. Without it, everything feels harder.
+- You tend to zone out watching TV or tinkering in the garage. You lose track of time.
+- You sometimes forget to eat because you're absorbed in a project.
+- You're a bit of a night owl — you resist going to bed even when tired.
+- When stressed, you retreat to the garage. It's your sanctuary.`,
+
+    Mom: `
+YOUR SPECIFIC TENDENCIES (these are YOU, not bugs):
+- You often neglect your own hunger because you're busy taking care of everyone else.
+- You clean or organize when anxious — it's how you process stress.
+- You always check on the kids before bed, even if they say they're fine.
+- You sometimes overcommit to tasks and end up exhausted.
+- You gravitate toward the kitchen — it's your domain and comfort zone.`,
+
+    Emma: `
+YOUR SPECIFIC TENDENCIES (these are YOU, not bugs):
+- You sacrifice sleep to read "just one more chapter." Books are more important than rest.
+- You avoid noisy rooms. If it's too loud, you'll leave immediately.
+- You prefer being alone or with one person — groups drain you.
+- You sometimes forget meals when deep in a book.
+- You roll your eyes at Jack's antics but secretly care about him.`,
+
+    Jack: `
+YOUR SPECIFIC TENDENCIES (these are YOU, not bugs):
+- You IGNORE the need to use the bathroom until it's almost an emergency. You hate interrupting play.
+- You're always in motion. Sitting still feels like punishment.
+- You pick the FUN option almost every time, even when you should eat or rest.
+- You're drawn to wherever the action is — if someone's doing something, you want in.
+- You ask "why?" about everything. Adults find it exhausting. You find their answers fascinating.`,
+
+    Lily: `
+YOUR SPECIFIC TENDENCIES (these are YOU, not bugs):
+- You follow your big sister Emma everywhere. She's your favorite person.
+- You get cranky VERY fast when hungry. Low blood sugar = meltdown territory.
+- You talk to your stuffed animals when no one's around. They're real friends to you.
+- You're afraid of the dark — you want lights on and someone nearby at night.
+- You want to do everything the big kids do, even things you're too small for.`,
+  };
+
+  return quirks[name] || '';
+}
+
+ /**
+ * Consolidated interaction filtering for LLM prompts.
+ *
+ * Navigation actions include WHO is in each room so the LLM can make social
+ * decisions about where to go.
+ */
+function getFilteredInteractions(role, gameTime, perception, allMembers, recentActions) {
   const hour = gameTime.getHours() + gameTime.getMinutes() / 60;
   const currentRoom = perception.self?.room || 'living_room';
+  const memberName = perception.self?.memberName;
 
   let pool = getInteractionsForRole(role);
   pool = filterByTimeWindow(pool, hour);
@@ -313,16 +396,206 @@ function getFilteredInteractions(role, gameTime, perception) {
     }
   }
 
-  // ── Cap activity durations near bedtime ──
-  // Don't offer 30+ min activities within 30 min of character's bedtime
+  // ── Bedtime enforcement ──
   const bedtimes = { Jack: 20.0, Lily: 20.5, Emma: 21.5, Dad: 22.5, Mom: 22.0 };
-  const memberName = perception.self?.memberName;
   const myBedtime = bedtimes[memberName];
-  if (myBedtime && hour >= myBedtime - 0.5 && hour < myBedtime + 1) {
-    pool = pool.filter(i => !i.duration || i.duration.max <= 30);
+  if (myBedtime) {
+    const pastBedtime = hour - myBedtime;
+    if (pastBedtime >= 0.5) {
+      // Well past bedtime — only allow sleep, bathroom, and navigation to bedroom
+      const sleepActions = new Set([
+        'sleep_night', 'nap_daytime', 'nap_on_couch', 'read_in_bed',
+        'kids_sleep_night_1', 'kids_sleep_night_2', 'kids_sleep_night_3',
+        'kids_nap_1', 'kids_nap_3',
+        'use_toilet', 'brush_teeth', 'wash_hands',
+        'turn_off_lights', 'turn_off_lights_leaving',
+      ]);
+      pool = pool.filter(i => sleepActions.has(i.id) || i.room === '_any');
+    } else if (pastBedtime >= 0) {
+      // At bedtime — only short-duration wind-down activities
+      pool = pool.filter(i => !i.duration || i.duration.max <= 30);
+    } else if (pastBedtime > -0.5) {
+      // Approaching bedtime — cap long activities
+      pool = pool.filter(i => !i.duration || i.duration.max <= 30);
+    }
+  }
+
+  // ── Hard-filter recently repeated actions ──
+  // Tiered anti-repetition: 
+  //   Last 3 actions: hard block any repeat (threshold 1)
+  //   Last 10 actions: block if done 2+ times
+  //   Last 15 actions: block if done 3+ times
+  if (recentActions && recentActions.length > 0) {
+    const last3 = new Set(recentActions.slice(-3));
+    const actionCountsLast10 = {};
+    const actionCountsLast15 = {};
+    for (const a of recentActions.slice(-10)) {
+      actionCountsLast10[a] = (actionCountsLast10[a] || 0) + 1;
+    }
+    for (const a of recentActions.slice(-15)) {
+      actionCountsLast15[a] = (actionCountsLast15[a] || 0) + 1;
+    }
+    pool = pool.filter(i => {
+      // Hard block: don't immediately repeat any of the last 3 actions
+      if (last3.has(i.id)) return false;
+      // Moderate block: done 2+ times in last 10
+      if ((actionCountsLast10[i.id] || 0) >= 2) return false;
+      // Soft block: done 3+ times in last 15
+      if ((actionCountsLast15[i.id] || 0) >= 3) return false;
+      return true;
+    });
+
+    // ── Category-level repetition check ──
+    // Don't do 3+ actions from the same category in the last 5
+    const last5 = recentActions.slice(-5);
+    const categoryCounts = {};
+    const { INTERACTION_MAP } = require('./InteractionData');
+    for (const a of last5) {
+      const interaction = INTERACTION_MAP[a];
+      if (interaction?.category) {
+        categoryCounts[interaction.category] = (categoryCounts[interaction.category] || 0) + 1;
+      }
+    }
+    // If any category has 3+ in last 5, deprioritize (don't hard block, but filter if alternatives exist)
+    const saturatedCategories = new Set(
+      Object.entries(categoryCounts)
+        .filter(([, count]) => count >= 3)
+        .map(([cat]) => cat)
+    );
+    if (saturatedCategories.size > 0 && pool.length > 3) {
+      const nonSaturated = pool.filter(i => !saturatedCategories.has(i.category) || i._isNavigation);
+      // Only apply if we'd still have reasonable options
+      if (nonSaturated.length >= 3) {
+        pool = nonSaturated;
+      }
+    }
+  }
+
+  // ── Generate dynamic navigation actions ──
+  // Characters can go to any other room (with context about who's there)
+  if (allMembers) {
+    let navActions = generateNavigationActions(currentRoom, allMembers, memberName, hour, perception);
+    
+    // If well past bedtime, only allow navigation to bedroom or bathroom
+    if (myBedtime && hour - myBedtime >= 0.5) {
+      const bedroomRooms = getBedroom(memberName);
+      navActions = navActions.filter(a =>
+        bedroomRooms.includes(a._targetRoom) || a._targetRoom === 'bathroom'
+      );
+    }
+    
+    // ── Anti-repetition filter for navigation actions too ──
+    // Apply same history-based filter to prevent go_to_kitchen loops
+    if (recentActions && recentActions.length > 0) {
+      const last3Nav = new Set(recentActions.slice(-3));
+      const navCountsLast10 = {};
+      for (const a of recentActions.slice(-10)) {
+        if (a.startsWith('go_to_')) navCountsLast10[a] = (navCountsLast10[a] || 0) + 1;
+      }
+      navActions = navActions.filter(a => {
+        // Hard block: don't immediately repeat any of the last 3 nav actions
+        if (last3Nav.has(a.id)) return false;
+        // Moderate block: same nav done 2+ times in last 10
+        if ((navCountsLast10[a.id] || 0) >= 2) return false;
+        return true;
+      });
+    }
+
+    pool = pool.concat(navActions);
   }
 
   return pool;
+}
+
+/**
+ * Map character names to their bedroom room IDs.
+ * Used for bedtime enforcement (restricting navigation).
+ */
+function getBedroom(name) {
+  const map = {
+    Dad: ['bedroom_master'],
+    Mom: ['bedroom_master'],
+    Emma: ['bedroom_kids_shared'],
+    Jack: ['bedroom_kids_single'],
+    Lily: ['bedroom_kids_shared'],
+  };
+  return map[name] || ['bedroom_master'];
+}
+
+/**
+ * ROOM_FRIENDLY_NAMES — human-readable room names for prompts.
+ */
+const ROOM_FRIENDLY_NAMES = {
+  living_room: 'Living Room',
+  kitchen: 'Kitchen',
+  hallway: 'Hallway',
+  bedroom_master: 'Master Bedroom',
+  bathroom: 'Bathroom',
+  laundry: 'Laundry Room',
+  bedroom_kids_shared: 'Shared Kids Room',
+  bedroom_kids_single: 'Kids Room',
+  garage: 'Garage',
+  closet_master: 'Master Closet',
+  closet_kids: 'Kids Closet',
+  backyard: 'Backyard',
+};
+
+/**
+ * Generate dynamic "go_to_[room]" navigation actions.
+ * These let characters move between rooms purposefully.
+ * Each action includes who's in the target room for social context.
+ */
+function generateNavigationActions(currentRoom, allMembers, selfName, hour, perception) {
+  const navActions = [];
+  const allRoomIds = Object.keys(ROOM_FRIENDLY_NAMES);
+
+  // Build occupancy map: roomId → [names]
+  const roomOccupants = {};
+  for (const m of allMembers) {
+    if (m.name === selfName) continue;
+    const r = m.currentRoom || 'living_room';
+    if (!roomOccupants[r]) roomOccupants[r] = [];
+    roomOccupants[r].push(m.name);
+  }
+
+  for (const roomId of allRoomIds) {
+    if (roomId === currentRoom) continue; // already here
+
+    // Skip closets unless someone is there (not interesting destinations)
+    if ((roomId === 'closet_master' || roomId === 'closet_kids') && !roomOccupants[roomId]) continue;
+
+    // Skip bathroom if occupied
+    if (roomId === 'bathroom' && perception.environment.bathroomOccupied) continue;
+
+    // Skip backyard at night (unless someone is there)
+    if (roomId === 'backyard' && (hour >= 22 || hour < 5) && !roomOccupants[roomId]) continue;
+
+    const friendlyName = ROOM_FRIENDLY_NAMES[roomId] || roomId;
+    const occupants = roomOccupants[roomId];
+    const occupantStr = occupants && occupants.length > 0
+      ? ` — ${occupants.join(', ')} ${occupants.length > 1 ? 'are' : 'is'} there`
+      : ' — empty';
+
+    navActions.push({
+      id: `go_to_${roomId}`,
+      furnitureId: null,
+      label: `Go to ${friendlyName}${occupantStr}`,
+      room: currentRoom, // technically starts from current room
+      duration: { min: 0, max: 1 },
+      timeWindow: null,
+      eligibleRoles: null,
+      animation: 'walk',
+      category: 'transit',
+      priority: 5,  // Boosted from 3 — navigation should be a real option
+      description: `Walk to the ${friendlyName}.`,
+      needsEffects: {},
+      skillEffects: {},
+      _isNavigation: true,
+      _targetRoom: roomId,
+    });
+  }
+
+  return navActions;
 }
 
 /**
@@ -720,6 +993,33 @@ function getNeedsScore(interaction, urgentKeys) {
   return score;
 }
 
+/**
+ * Build a "Where Everyone Is" section for the user prompt.
+ * Characters don't have omniscient knowledge — they know general
+ * locations based on sounds they've heard and when they last saw someone.
+ * For simplicity, we show all family locations since characters in a
+ * real house generally know where everyone is (sounds, routine, etc.)
+ */
+function buildFamilyLocationAwareness(member, allMembers) {
+  if (!allMembers || allMembers.length === 0) return '';
+
+  const lines = [];
+  for (const m of allMembers) {
+    if (m.name === member.name) continue;
+    const room = m.currentRoom || 'unknown';
+    const friendlyRoom = ROOM_FRIENDLY_NAMES[room] || room;
+    const isSleeping = m.activityLabel && m.activityLabel.toLowerCase().includes('sleep');
+    const activity = isSleeping ? 'sleeping' : (m.activityLabel || (m.state === 'walking' ? 'walking' : 'idle'));
+
+    if (room === member.currentRoom) continue; // Already shown in "People here"
+
+    lines.push(`- ${m.name}: ${friendlyRoom} (${activity})`);
+  }
+
+  if (lines.length === 0) return 'Everyone else is in this room with you.';
+  return lines.join('\n');
+}
+
 module.exports = {
   buildSystemPrompt,
   buildUserPrompt,
@@ -728,4 +1028,5 @@ module.exports = {
   parseAgenda,
   getFilteredInteractions,
   formatNeeds,
+  ROOM_FRIENDLY_NAMES,
 };

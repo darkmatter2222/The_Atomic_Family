@@ -81,27 +81,99 @@ function getAllPersonaNames() {
 /**
  * PersonaState — Dynamic per-character state managed alongside the
  * static persona. Created once per character at simulation start.
+ *
+ * UPGRADED: Added emotionalMemories (for MemoryManager), dynamic
+ * relationship tracking (patience, warmth, recent sentiment),
+ * and internal monologue buffer.
  */
 function createPersonaState(name) {
   const persona = PERSONA_MAP[name];
   if (!persona) return null;
 
+  // Build initial dynamic relationship state from static persona data
+  const dynamicRelationships = {};
+  if (persona.relationships) {
+    for (const [targetName, staticRel] of Object.entries(persona.relationships)) {
+      dynamicRelationships[targetName] = {
+        closeness: staticRel.closeness || 0.5,
+        patience: 1.0,                // depletes during arguments, refills over time
+        warmth: staticRel.closeness || 0.5, // rises with positive interactions
+        recentSentiment: 0,           // running average: -1 (hostile) to +1 (loving)
+        lastInteractionTime: null,
+        interactionCount: 0,
+      };
+    }
+  }
+
   return {
     name,
-    mood: 'content',           // current emotional state
-    moodIntensity: 0.5,         // 0 = flat, 1 = intense
-    stressLevel: 0.1,           // 0 = zen, 1 = overwhelmed
+    mood: 'content',              // current emotional state
+    moodIntensity: 0.5,           // 0 = flat, 1 = intense
+    stressLevel: 0.1,             // 0 = zen, 1 = overwhelmed
     socialBattery: persona.personality.extraversion,  // drains/recharges based on E
-    lastDecision: null,          // { interactionId, reason, timestamp }
-    lastThought: null,           // string — most recent LLM reasoning
-    currentGoal: null,           // short-term goal string
-    pendingSpeech: null,         // { text, target, emotion } — for speech bubbles
-    memories: [],                // [{ timestamp, type, content, importance }]
-    conversations: [],           // [{ timestamp, speaker, target, text, emotion }]
-    recentInteractions: [],      // last 10 interaction IDs performed
-    dailyLog: [],                // summary of today's activities
+    lastDecision: null,            // { interactionId, reason, timestamp }
+    lastThought: null,             // string — most recent LLM reasoning
+    currentGoal: null,             // short-term goal string
+    pendingSpeech: null,           // { text, target, emotion } — for speech bubbles
+    memories: [],                  // [{ timestamp, type, content, importance }]
+    emotionalMemories: [],         // [{ timestamp, type, content, emotion, emotionIntensity, fadeRate, importance, involvedCharacters, location }]
+    conversations: [],             // [{ timestamp, speaker, target, text, emotion }]
+    recentInteractions: [],        // last 10 interaction IDs performed
+    dailyLog: [],                  // summary of today's activities
+    dynamicRelationships,          // per-character live relationship dimensions
+    internalMonologue: null,       // last LLM reflector thought (displayed as thought bubble)
+    dailySummaryNarrative: null,   // Tier 2: LLM-generated narrative of today so far
+    relationshipNarratives: {},    // Tier 3: { targetName: "narrative string" } per-relationship
+    emotionalCascadeBuffer: [],    // Rolling buffer of recent emotional shifts: [{ shift, emotion, reason, gameHour }]
     obedience: persona.authority < 0.5 ? 0.5 : 0.8, // how likely to follow commands (kids lower)
   };
+}
+
+/**
+ * Update dynamic relationship dimensions after a social interaction.
+ * Called by MemoryManager.recordSocialMemory() or GameSimulation.
+ *
+ * @param {object} personaState - Subject character's state
+ * @param {string} targetName - Who the interaction was with
+ * @param {number} sentimentDelta - How positive/negative (-1 to +1)
+ */
+function updateDynamicRelationship(personaState, targetName, sentimentDelta = 0) {
+  const rel = personaState.dynamicRelationships?.[targetName];
+  if (!rel) return;
+
+  rel.interactionCount++;
+  rel.lastInteractionTime = Date.now();
+
+  // Running sentiment average (exponential moving average)
+  rel.recentSentiment = rel.recentSentiment * 0.7 + sentimentDelta * 0.3;
+
+  // Warmth slowly moves toward recent sentiment
+  rel.warmth = Math.max(0, Math.min(1,
+    rel.warmth + sentimentDelta * 0.05
+  ));
+
+  // Patience depletes with negative interactions, slowly recharges
+  if (sentimentDelta < -0.2) {
+    rel.patience = Math.max(0, rel.patience + sentimentDelta * 0.2);
+  }
+}
+
+/**
+ * Tick dynamic relationships (called each game tick).
+ * Patience slowly recovers. Sentiment drifts toward neutral.
+ */
+function tickDynamicRelationships(personaState, deltaSeconds) {
+  if (!personaState.dynamicRelationships) return;
+
+  for (const rel of Object.values(personaState.dynamicRelationships)) {
+    // Patience slowly recovers (full recovery in ~15 minutes)
+    rel.patience = Math.min(1, rel.patience + deltaSeconds * (1 / 900));
+
+    // Recent sentiment slowly drifts toward neutral
+    if (Math.abs(rel.recentSentiment) > 0.01) {
+      rel.recentSentiment *= (1 - deltaSeconds * 0.001);
+    }
+  }
 }
 
 /**
@@ -249,11 +321,38 @@ function updateMood(personaState, needs, recentEvents = []) {
     (1 - weightedAvg / 100) * neuroticism + personaState.stressLevel * 0.7
   ));
 
-  // Social battery
+  // Social battery — tracks social energy, separate from social need
+  // Introverts: drain faster from interaction, recharge faster alone
+  // Extroverts: drain slower from interaction, recharge slower alone (they need people!)
   const extraversion = persona.personality?.extraversion || 0.5;
-  const socialNeed = needs?.social || 50;
+  const currentBattery = personaState.socialBattery;
+
+  // Count recent conversations (last 30 minutes of game time)
+  const recentConvs = (personaState.conversations || []).filter(c => {
+    if (!c.timestamp) return false;
+    return (Date.now() - c.timestamp) < 30 * 60 * 1000; // 30 real minutes
+  }).length;
+
+  // Drain from social interaction (stronger for introverts)
+  const drainPerConv = extraversion < 0.45 ? 0.08 : extraversion > 0.7 ? 0.02 : 0.04;
+  const drainFromRecent = Math.min(recentConvs * drainPerConv, 0.5);
+
+  // Recharge rate when alone (stronger for introverts)
+  const isAlone = !personaState._currentlyWithPeople; // set externally during tick
+  const rechargeRate = isAlone
+    ? (extraversion < 0.45 ? 0.03 : extraversion > 0.7 ? 0.01 : 0.02)
+    : 0;
+
+  // Extroverts get a boost from social need being met (they recharge through people)
+  const socialBoost = extraversion > 0.6 && recentConvs > 0 ? 0.02 * extraversion : 0;
+
+  // Compute new battery: blend current state with interaction-based adjustments
+  const targetBattery = Math.max(0, Math.min(1,
+    currentBattery - drainFromRecent + rechargeRate + socialBoost
+  ));
+  // Smooth transition (don't jump instantly)
   personaState.socialBattery = Math.max(0, Math.min(1,
-    socialNeed / 100 * extraversion + (1 - extraversion) * 0.5
+    currentBattery * 0.7 + targetBattery * 0.3
   ));
 }
 
@@ -380,6 +479,77 @@ function getNickname(speakerName, targetName) {
 }
 
 /**
+ * Summarize the emotional cascade buffer into a natural-language string for the Deliberator.
+ * Returns null if the buffer is empty or too small to summarize.
+ * 
+ * The cascade buffer accumulates emotional shifts across decisions. This function
+ * detects emotional trends (escalating frustration, improving mood, emotional volatility)
+ * and produces a short first-person narrative that feeds into the next reasoning cycle.
+ */
+function summarizeEmotionalCascade(personaState) {
+  const buffer = personaState.emotionalCascadeBuffer;
+  if (!buffer || buffer.length < 2) return null;
+
+  // Calculate net emotional trajectory
+  const totalShift = buffer.reduce((sum, e) => sum + (e.shift || 0), 0);
+  const recentShift = buffer.slice(-3).reduce((sum, e) => sum + (e.shift || 0), 0);
+  const negativeCount = buffer.filter(e => (e.shift || 0) < -3).length;
+  const positiveCount = buffer.filter(e => (e.shift || 0) > 3).length;
+  
+  // Collect unique recent emotions (last 5 entries)
+  const recentEmotions = [...new Set(buffer.slice(-5).map(e => e.emotion).filter(Boolean))];
+  
+  // Detect emotional volatility (rapid swings)
+  let swings = 0;
+  for (let i = 1; i < buffer.length; i++) {
+    const prev = buffer[i - 1].shift || 0;
+    const curr = buffer[i].shift || 0;
+    if ((prev > 3 && curr < -3) || (prev < -3 && curr > 3)) swings++;
+  }
+
+  const parts = [];
+
+  // Overall trajectory
+  if (totalShift < -15) {
+    parts.push(`Your day has been rough — you've been accumulating frustration and stress.`);
+  } else if (totalShift < -5) {
+    parts.push(`Your mood has been dipping — small irritations adding up.`);
+  } else if (totalShift > 15) {
+    parts.push(`You've been in a genuinely good mood — things have been going well today.`);
+  } else if (totalShift > 5) {
+    parts.push(`Your mood has been gently improving — small wins adding up.`);
+  }
+
+  // Recent trend (last 3 decisions)
+  if (recentShift < -8) {
+    parts.push(`The last few things that happened really got to you.`);
+  } else if (recentShift > 8) {
+    parts.push(`The last few moments have been a real mood boost.`);
+  }
+
+  // Escalation warning (goals.md Step 5: threshold flagging)
+  if (negativeCount >= 4) {
+    parts.push(`You can feel your patience wearing thin. You've been getting increasingly frustrated.`);
+  } else if (negativeCount >= 3) {
+    parts.push(`There's a tension building — not terrible, but you're not at your most patient.`);
+  }
+
+  // Emotional volatility
+  if (swings >= 2) {
+    parts.push(`Your emotions have been all over the place — up and down, up and down.`);
+  }
+
+  // Recent emotional coloring
+  if (recentEmotions.length > 0 && parts.length > 0) {
+    parts.push(`Recently you've been feeling: ${recentEmotions.join(', ')}.`);
+  }
+
+  if (parts.length === 0) return null;
+
+  return `YOUR EMOTIONAL STATE RIGHT NOW:\n${parts.join(' ')}`;
+}
+
+/**
  * Serialize persona state for client broadcast.
  */
 function serializePersonaState(personaState) {
@@ -409,12 +579,15 @@ module.exports = {
   addConversation,
   recordDecision,
   updateMood,
+  updateDynamicRelationship,
+  tickDynamicRelationships,
   getCurrentScheduleEntry,
   buildMemorySummary,
   buildConversationSummary,
   buildDailySummary,
   resetDailyLog,
   getNickname,
+  summarizeEmotionalCascade,
   serializePersonaState,
   FAMILY_DATA,
   SOCIAL_DYNAMICS,

@@ -507,7 +507,11 @@
     "wave_at_neighbors": "stand_wave",
     "turn_on_lights": "stand_use",
     "turn_off_lights": "stand_use",
-    "turn_off_lights_leaving": "stand_use"
+    "turn_off_lights_leaving": "stand_use",
+    "daydream": "stand_use",
+    "stretch_body": "stand_use",
+    "look_around_room": "stand_use",
+    "hum_song": "stand_use"
   },
   "interactions": [
     {
@@ -3330,6 +3334,94 @@
       "description": "Flip the light switch off when leaving a room.",
       "needsEffects": {},
       "skillEffects": {}
+    },
+    {
+      "id": "daydream",
+      "furnitureId": "_room_any",
+      "label": "Daydream",
+      "room": "_any",
+      "duration": {
+        "min": 3,
+        "max": 10
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "relaxing",
+      "priority": 2,
+      "description": "Stand or sit and let your mind wander. Think about nothing, or everything.",
+      "icon": "💭",
+      "needsEffects": {
+        "comfort": 5,
+        "fun": 3,
+        "energy": 2
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "stretch_body",
+      "furnitureId": "_room_any",
+      "label": "Stretch and move around",
+      "room": "_any",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "routine",
+      "priority": 2,
+      "description": "Stretch your arms, legs, and back. Shake out the stiffness.",
+      "icon": "🤸",
+      "needsEffects": {
+        "energy": 3,
+        "comfort": 5
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "look_around_room",
+      "furnitureId": "_room_any",
+      "label": "Look around the room",
+      "room": "_any",
+      "duration": {
+        "min": 1,
+        "max": 3
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "routine",
+      "priority": 1,
+      "description": "Take a moment to see what's going on around you. Who's here? What needs doing?",
+      "icon": "👀",
+      "needsEffects": {},
+      "skillEffects": {}
+    },
+    {
+      "id": "hum_song",
+      "furnitureId": "_room_any",
+      "label": "Hum a song",
+      "room": "_any",
+      "duration": {
+        "min": 2,
+        "max": 5
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "relaxing",
+      "priority": 2,
+      "description": "Hum whatever tune is stuck in your head.",
+      "icon": "🎵",
+      "needsEffects": {
+        "fun": 5,
+        "comfort": 3
+      },
+      "skillEffects": {
+        "creativity": 0.05
+      }
     }
   ],
   "needs": {
