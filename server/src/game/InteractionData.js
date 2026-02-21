@@ -177,7 +177,7 @@ const CHARACTER_DECAY_MULTIPLIERS = {
     bladder:  1.0,   // normal
     fun:      0.85,  // imaginative — creates her own fun, drains slower
     social:   1.3,   // mommy-dependent — social need drains FAST, especially without Mom
-    comfort:  1.3,   // very sensitive — discomfort hits hard and fast
+    comfort:  1.0,   // sensitive — but 1.3 caused zero-comfort by evening hours every day
     hydration: 1.0,
   },
   Jack: {

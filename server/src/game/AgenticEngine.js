@@ -268,14 +268,43 @@ class AgenticEngine {
         this.lastReasoningTime[resp.name] = 0;
         this.socialEngine.markForceConsumed(resp.name);
       } else if (member.state === 'walking' || member.state === 'performing') {
-        // Character is busy — convert forced interrupt to deferred reply.
-        // This gives them the LONGER timeout (45s instead of 15s) so they can
-        // finish their current activity and respond naturally when entering CHOOSING.
-        // Without this, the 15s forced timeout kills the reply before they arrive.
-        const convState = this.socialEngine.characterConvState?.[resp.name];
-        if (convState?.pendingReply) {
-          convState.pendingReply.forceInterrupt = false;  // 45s timeout now
-          convState.pendingReply._alreadyForced = true;   // stop retrying
+        // Character is busy — interrupt PERFORMING characters to let them reply
+        // while preserving their current activity. The conversation pipeline will
+        // lock to currentActionId so they keep doing what they're doing and just
+        // add speech. For WALKING characters, defer — they'll arrive and respond.
+        if (member.state === 'performing') {
+          const idx = family.indexOf(member);
+          if (idx >= 0) {
+            // Force into CHOOSING but KEEP currentInteraction so conversation
+            // pipeline can lock to it — character responds WITHOUT losing activity
+            family[idx] = {
+              ...member,
+              state: 'choosing',
+              activityLabel: `💬 Responding to ${resp.from}...`,
+              // PRESERVE interaction state — don't clear these:
+              // currentInteraction, interactionTimer, interactionDuration stay intact
+            };
+
+            this.lastReasoningTime[resp.name] = 0;
+            this.socialEngine.markForceConsumed(resp.name);
+
+            logger.logStateTransition({
+              character: resp.name,
+              from: 'performing',
+              to: 'choosing',
+              reason: `Interrupted (performing) to respond to ${resp.from}: "${resp.text.substring(0, 60)}"`,
+              conversationId: resp.threadId,
+              triggerSpeaker: resp.from,
+              position: member.position,
+            });
+          }
+        } else {
+          // WALKING — defer, they'll respond when they arrive
+          const convState = this.socialEngine.characterConvState?.[resp.name];
+          if (convState?.pendingReply) {
+            convState.pendingReply.forceInterrupt = false;  // 45s timeout now
+            convState.pendingReply._alreadyForced = true;   // stop retrying
+          }
         }
       }
       // If thinking: don't touch — they're mid-reasoning and will pick up on next cycle
@@ -346,10 +375,38 @@ class AgenticEngine {
       const recent = personaState.recentInteractions?.slice(-1) || [];
       if (recent.length >= 1 && recent[0] === decision.action && !decision.isCreatedAction) {
         console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" 2nd time in a row — rejected, forcing variety`);
-        // Still record the thought, but null the action so fallback AI picks
         personaState.lastThought = decision.thought;
         this.socialEngine.markResponded(memberName);
         return false; // Tell GameSimulation to use fallback instead
+      }
+
+      // ── Category-level anti-repetition ──
+      // If the last 3 actions are all in the same functional category (e.g., eating/snacking),
+      // reject this one if it's ALSO in that category. Prevents loops like:
+      // get_snack_fridge → get_pantry_item → get_drink_fridge → get_snack_fridge
+      if (!decision.isCreatedAction) {
+        const { INTERACTION_MAP } = require('./InteractionData');
+        const recentThree = personaState.recentInteractions?.slice(-3) || [];
+        if (recentThree.length >= 3) {
+          const getCategoryKey = (actionId) => {
+            const ia = INTERACTION_MAP[actionId];
+            if (!ia) return actionId;
+            // Group similar categories: eating+cooking = food, all social = social, etc.
+            const cat = ia.category || '';
+            if (cat === 'eating' || cat === 'cooking' || cat === 'snacking') return 'food';
+            if (cat === 'cleaning') return 'cleaning';
+            if (cat === 'social' || cat === 'conversation') return 'social';
+            return cat || actionId;
+          };
+          const recentCats = recentThree.map(getCategoryKey);
+          const decisionCat = getCategoryKey(decision.action);
+          if (recentCats.every(c => c === decisionCat)) {
+            console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" — 4th "${decisionCat}" in a row — rejected, forcing variety`);
+            personaState.lastThought = decision.thought;
+            this.socialEngine.markResponded(memberName);
+            return false;
+          }
+        }
       }
 
       personaState.lastThought = decision.thought;

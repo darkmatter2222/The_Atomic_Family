@@ -33,14 +33,14 @@ const logger = require('./SimulationLogger');
 
 const MAX_GLOBAL_LOG = 200;       // Global conversation log limit
 const SPEECH_DISPLAY_MS = 6000;   // How long speech bubbles last
-const MAX_THREAD_TURNS = 4;       // Max back-and-forth turns per thread (was 6 — caused infinite loops)
-const THREAD_TIMEOUT_MS = 45000;  // Thread expires after 45s of no activity
+const MAX_THREAD_TURNS = 6;       // Max back-and-forth turns per thread
+const THREAD_TIMEOUT_MS = 90000;  // Thread expires after 90s of no activity (LLM calls take 15-40s)
 const THREAD_RETAIN_MS = 600000;  // Keep expired threads for 10 minutes
-const THREAD_RESPONSE_WINDOW_MS = 15000; // How long to wait for a reply (15s — was 30s, too slow)
-const MAX_ACTIVE_THREADS = 6;     // Max concurrent threads (was 10 — too many simultaneous conversations)
-const INTERRUPT_COOLDOWN_MS = 15000; // Min time between interrupts to same person (was 10s)
-const CONVERSATION_PAIR_COOLDOWN_MS = 120000; // 2 min cooldown between two characters starting a NEW conversation
-const MIN_SPEECH_INTERVAL_MS = 8000;  // Min 8s between speech acts for the same character
+const THREAD_RESPONSE_WINDOW_MS = 45000; // 45s for forced interrupts (LLM pipelines take 15-40s)
+const MAX_ACTIVE_THREADS = 6;     // Max concurrent threads
+const INTERRUPT_COOLDOWN_MS = 12000; // Min time between interrupts to same person
+const CONVERSATION_PAIR_COOLDOWN_MS = 60000; // 60s cooldown between same pair starting NEW conversation (was 120s)
+const MIN_SPEECH_INTERVAL_MS = 6000;  // Min 6s between speech acts (was 8s — too long for natural flow)
 
 class SocialEngine {
   constructor() {
@@ -262,45 +262,98 @@ class SocialEngine {
 
     // ── If not a reply, start a new thread (if target is in the SAME ROOM) ──
     if (!thread && targetName && targetName !== 'everyone' && targetName !== 'room') {
-      // ── Pair cooldown — don't start new conversations with someone you just talked to ──
-      const pairKey = [speakerName, targetName].sort().join('_');
-      const cooldownExpires = this.pairCooldowns.get(pairKey) || 0;
-      if (Date.now() < cooldownExpires) {
-        // Cooldown active — convert to general statement (no new thread)
-        targetName = 'everyone';
-        entry.target = 'everyone';
-      } else if (!this._areInSameRoom(speakerName, targetName, family)) {
-        // Cross-room speech — log it but don't create a thread
-        logger.logEvent({
-          type: 'cross_room_speech',
-          message: `${speakerName} tried to talk to ${targetName} from another room — blocked`,
-          data: { speaker: speakerName, target: targetName, speakerRoom: room,
-                  targetRoom: targetMember?.currentRoom || 'unknown' },
-        });
-        // Convert to announcement instead
-        targetName = 'everyone';
-        entry.target = 'everyone';
-        entry.type = 'shout';
-      } else {
-        thread = this._startThread(speakerName, targetName, text, emotion, room);
-        entry.threadId = thread.id;
+      // ── Check if there's already an active thread between this pair ──
+      // This prevents duplicate threads (e.g., Dad-Emma having 5 simultaneous conversations)
+      const existingPairThread = this._findActiveThreadForPair(speakerName, targetName);
+      if (existingPairThread) {
+        // Check if this speaker was the LAST person to talk in the thread.
+        // If so, suppress — it's the other person's turn, not ours again.
+        const lastTurn = existingPairThread.turns[existingPairThread.turns.length - 1];
+        if (lastTurn && lastTurn.speaker === speakerName) {
+          // Same person trying to talk again — suppress and convert to room speech
+          targetName = 'everyone';
+          entry.target = 'everyone';
+        } else {
+          // It IS our turn — add as reply to existing thread
+          existingPairThread.addTurn(speakerName, text.trim(), emotion);
+          thread = existingPairThread;
+          entry.threadId = thread.id;
 
-        // Flag the target to respond with force-interrupt (first turn of new conversation)
-        if (this.characterConvState[targetName]) {
-          this.characterConvState[targetName].pendingReply = {
-            threadId: thread.id,
-            from: speakerName,
+          // Set up reply expectation for the other person
+          const otherPerson = thread.participants.find(p => p !== speakerName);
+          if (otherPerson && this.characterConvState[otherPerson]) {
+            if (!thread.isOver()) {
+              this.characterConvState[otherPerson].pendingReply = {
+                threadId: thread.id,
+                from: speakerName,
+                text: text.trim(),
+                emotion,
+                timestamp,
+                forceInterrupt: false,
+                _alreadyForced: false,
+              };
+              this.characterConvState[otherPerson].activeThreadId = thread.id;
+            }
+          }
+          // Update speaker's active thread
+          if (this.characterConvState[speakerName]) {
+            this.characterConvState[speakerName].activeThreadId = thread.id;
+          }
+
+          logger.logConversation({
+            conversationId: thread.id,
+            action: 'reply',
+            speaker: speakerName,
+            target: otherPerson || targetName,
             text: text.trim(),
             emotion,
-            timestamp,
-            forceInterrupt: true,   // First turn: force interrupt
-            _alreadyForced: false,
-          };
-          this.characterConvState[targetName].activeThreadId = thread.id;
+            room,
+            turnNumber: thread.turns.length,
+            threadLength: thread.turns.length,
+            speakerPosition: speakerMember?.position,
+          });
         }
+      } else {
+        // ── Pair cooldown — don't start new conversations with someone you just talked to ──
+        const pairKey = [speakerName, targetName].sort().join('_');
+        const cooldownExpires = this.pairCooldowns.get(pairKey) || 0;
+        if (Date.now() < cooldownExpires) {
+          // Cooldown active — convert to general statement (no new thread)
+          targetName = 'everyone';
+          entry.target = 'everyone';
+        } else if (!this._areInSameRoom(speakerName, targetName, family)) {
+          // Cross-room speech — log it but don't create a thread
+          logger.logEvent({
+            type: 'cross_room_speech',
+            message: `${speakerName} tried to talk to ${targetName} from another room — blocked`,
+            data: { speaker: speakerName, target: targetName, speakerRoom: room,
+                    targetRoom: targetMember?.currentRoom || 'unknown' },
+          });
+          // Convert to announcement instead
+          targetName = 'everyone';
+          entry.target = 'everyone';
+          entry.type = 'shout';
+        } else {
+          thread = this._startThread(speakerName, targetName, text, emotion, room);
+          entry.threadId = thread.id;
 
-        // Check if this should interrupt the target
-        interrupt = this._checkInterrupt(speakerName, targetName, text, speechType, room, family);
+          // Flag the target to respond with force-interrupt (first turn of new conversation)
+          if (this.characterConvState[targetName]) {
+            this.characterConvState[targetName].pendingReply = {
+              threadId: thread.id,
+              from: speakerName,
+              text: text.trim(),
+              emotion,
+              timestamp,
+              forceInterrupt: true,   // First turn: force interrupt
+              _alreadyForced: false,
+            };
+            this.characterConvState[targetName].activeThreadId = thread.id;
+          }
+
+          // Check if this should interrupt the target
+          interrupt = this._checkInterrupt(speakerName, targetName, text, speechType, room, family);
+        }
       }
     }
 
@@ -351,6 +404,20 @@ class SocialEngine {
     });
 
     return { entry, thread, interrupt };
+  }
+
+  /**
+   * Find an existing active thread between two characters.
+   * Prevents duplicate threads (e.g., Dad-Emma having 5 conversations at once).
+   */
+  _findActiveThreadForPair(nameA, nameB) {
+    for (const [, thread] of this.threads) {
+      if (!thread.isActive()) continue;
+      if (thread.participants.includes(nameA) && thread.participants.includes(nameB)) {
+        return thread;
+      }
+    }
+    return null;
   }
 
   /**
@@ -499,10 +566,10 @@ class SocialEngine {
       if (!state.pendingReply) continue;
 
       // Timeout pending replies — but give non-forced replies LONGER to respond
-      // (they need to finish their current activity first)
+      // (they need to finish their current activity + idle + run conv pipeline)
       const timeoutMs = state.pendingReply.forceInterrupt
-        ? THREAD_RESPONSE_WINDOW_MS   // 15s for forced interrupts
-        : THREAD_RESPONSE_WINDOW_MS * 3; // 45s for natural turn-taking
+        ? THREAD_RESPONSE_WINDOW_MS       // 45s for forced interrupts (pipeline takes 15-40s)
+        : THREAD_RESPONSE_WINDOW_MS * 2;  // 90s for natural turn-taking (finish activity + pipeline)
 
       if (now - state.pendingReply.timestamp >= timeoutMs) {
         const thread = this.threads.get(state.pendingReply.threadId);

@@ -84,6 +84,12 @@ class ReasoningPipeline {
     const lowestNeed = getLowestNeed(needs);
     const memories = buildMemorySummary(personaState);
     const conversations = buildConversationSummary(personaState);
+    // Build "my own recent speech" for anti-repetition
+    const myRecentSpeech = (personaState?.conversations || [])
+      .filter(c => c.speaker === member.name)
+      .slice(-5)
+      .map(c => `"${c.text}"`)
+      .join('\n');
     const dailySummary = getDailySummaryNarrative(personaState) || buildDailySummary(personaState);
     const relationshipContext = getAllRelationshipNarratives(personaState);
     const peopleInRoom = perception.visible.peopleInRoom;
@@ -372,10 +378,13 @@ Think through 2-3 options honestly, then decide. I can stay here OR go somewhere
 
     // ──────────────────────────────────────────────────────
     // STAGE 3: SOCIAL REASONING  (Social Agent)
-    //   Only if other people are present. "What should I say?"
+    //   Runs if other people are present OR if character is a young child (who talk to themselves).
+    //   "What should I say?"
     // ──────────────────────────────────────────────────────
     let socialContext = null;
-    if (peopleInRoom.length > 0) {
+    const isYoungChild = persona.age < 10;
+    const hasPeople = peopleInRoom.length > 0;
+    if (hasPeople || isYoungChild) {
       // Build "recently talked to" context from conversation summary
       const recentConvCount = personaState?.conversations?.length || 0;
       const recentConvWarning = recentConvCount > 3
@@ -389,17 +398,20 @@ Think through 2-3 options honestly, then decide. I can stay here OR go somewhere
         systemPrompt: `You ARE ${persona.fullName} (${persona.age}, ${persona.role}).
 Your speech style: ${persona.speechStyle}
 ${persona.catchPhrases ? `Things you tend to say: ${persona.catchPhrases.slice(0, 3).join(' | ')}` : ''}
-${persona.role === 'father' || persona.role === 'mother' ? 'As a parent, you care about your children and engage with them. But you don\'t script your parenting — you react naturally.' : ''}
-${persona.age < 10 ? 'You talk like a kid — excited, unfiltered, sometimes too loud.' : ''}
-${persona.age >= 10 && persona.age < 18 ? 'You talk like a teenager — sometimes casual, sometimes sharp, sometimes unexpectedly sincere.' : ''}
+${persona.role === 'father' || persona.role === 'mother' ? `As a parent, you naturally talk to your kids and partner throughout the day. You check in on them, comment on what they're doing, ask questions, give instructions, share observations, make jokes. Parents DON'T silently move through the house ignoring their family — they ENGAGE. This is a house full of people you love.` : ''}
+${persona.age < 10 ? 'You talk like a kid — excited, unfiltered, sometimes too loud. You talk ALL THE TIME. Kids your age narrate their day, ask questions constantly, and share every thought.' : ''}
+${persona.age >= 10 && persona.age < 18 ? 'You talk like a teenager — sometimes casual, sometimes sharp, sometimes unexpectedly sincere. You might be quiet around parents but chatty with siblings, or vice versa.' : ''}
 
-Think about whether you\'d naturally say something. Don\'t force it.
-Sometimes silence IS the right call — people don't talk constantly in real life.
-IMPORTANT: If you recently had a conversation with someone, DON'T immediately start another one. 
-Give it time. Real people have quiet periods between conversations.
-If speaking, say WHO and WHAT — and make it sound like YOU, not a script.
+SPEECH IS NATURAL — families talk constantly. Not every word is a deep conversation.
+Quick comments, observations, questions, greetings, reactions — this is the TEXTURE of family life.
+"How's it going?" "What are you drawing?" "Anyone hungry?" "Can you help me with this?" 
+"That smells good." "Did you finish your homework?" "Look at this!" 
+If someone else is in the room, there's usually SOME interaction — even if it's brief.
+Silence is okay sometimes, but silence should be the EXCEPTION, not the default.
 Keep speech short — 1-2 sentences max. Real conversation is concise.
-No JSON — just your social reasoning and what you might say (or "I\'d stay quiet").`,
+If speaking, say WHO and WHAT — and make it sound like YOU, not a script.
+VARIETY: Don't start every sentence with "Hey [name]". Real people vary their openers — jump into the topic, make an observation, ask directly, or just say what's on your mind. Only sometimes use a greeting.
+No JSON — just your social reasoning and what you might say.`,
         userPrompt: `I've decided to: ${stage2.response}
 
 MY CURRENT ACTIVITY: ${member.activityLabel || 'idle'}${member.interactionTimer && member.interactionDuration ? ` (${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done)` : ''}
@@ -407,23 +419,29 @@ What I'm doing shapes what I'd naturally say. If I'm cooking, I'd mention food o
 If I'm reading, I'd reference the book. If I'm working on something, I'd comment on it.
 My words should FLOW FROM my activity — not appear from nowhere.
 
-People in the room with me:
-${peopleInRoom.map(p => `- ${p.name} (${p.activity || p.state})${p.destination ? ` heading to ${p.destination}` : ''}`).join('\n')}
+${hasPeople ? `People in the room with me:
+${peopleInRoom.map(p => `- ${p.name} (${p.activity || p.state})${p.destination ? ` heading to ${p.destination}` : ''}`).join('\n')}` : `I'm alone right now.${isYoungChild ? `\nBut I'm a little kid — I talk to myself, narrate what I'm doing, call out to Mommy or Daddy, make sound effects, sing, or just think out loud. Kids my age don't stay silent when they're playing alone!` : ''}`}
 
 ${perception.environment.sleepingMembers.length > 0 ? `⚠ Sleeping: ${perception.environment.sleepingMembers.join(', ')} — be quiet!` : ''}
 
 Recent conversations:
 ${conversations}
+${myRecentSpeech ? `\n⚠ THINGS I ALREADY SAID (DO NOT REPEAT THESE — say something NEW or stay silent):\n${myRecentSpeech}\n` : ''}
 ${recentConvWarning}
 
-Should I say something? If so, to whom and what? Consider:
-- Does my CURRENT ACTIVITY naturally lead me to say something? (cooking → "dinner's almost ready", reading → "you should read this!", cleaning → "can someone help?")
-- Do I need information I don't have (like when's dinner)?
-- Should I greet someone who just arrived?
-- Should I comment on what someone else is doing?
-- Do I want to invite someone to JOIN what I'm doing?
-- Or should I stay quiet and focus on my task?
-- Have I ALREADY been talking a lot? Maybe it's time to be quiet.`,
+${hasPeople ? `With ${peopleInRoom.length} other ${peopleInRoom.length === 1 ? 'person' : 'people'} here, what would I naturally say?
+IMPORTANT: If I recently said something similar, I should either bring up a DIFFERENT topic or stay quiet. Don't ask the same question twice. Don't make the same comment again.
+Consider:
+- A quick comment about what I'm doing or what they're doing
+- A question — "How's it going?" "Need any help?" "What are you up to?"
+- A reaction to something I see — "Nice drawing!" "Smells good." "You look tired."
+- Something from my current activity — offering, inviting, commenting
+- An observation about the house, the time, the day
+- A parenting moment — check-in, reminder, encouragement, instruction
+- Just a warm greeting if we haven't talked in a while
+Only stay silent if I'm deeply focused AND the other person seems busy too.` : `Even though I'm alone, would I talk to myself? Call out for someone? Make a comment about what I'm doing? Narrate my play? Sing?
+If so, set speechTarget to "room" or "everyone" — it's just me thinking out loud.
+If I genuinely have nothing to say, that's fine too.`}`,
         options: { temperature: 0.6, max_tokens: 200, top_p: 0.9 },
       });
       stages.push(stage3);
@@ -527,13 +545,54 @@ Output ONLY this JSON:
         }
 
         // Post-process: strip role-title address from adult-to-adult speech
-        // e.g. "Mom, could you..." when Dad is speaking to Mom  or  "Dad, sure thing" when Mom responds
+        // e.g. "Mom, could you..." or "Hey Dad, sure thing" when spouses talk to each other
         if (finalDecision.speech && (member.role === 'father' || member.role === 'mother')) {
-          const roleAddressRe = /^(Mom|Dad)[,!?]\s*/i;
+          // Match "Dad," "Mom," "Hey Dad," "Oh Mom!" etc. at start of speech
+          const roleAddressRe = /^(hey\s+|oh\s+|so\s+|well\s+|um\s+|okay\s+)?(Mom|Mommy|Dad|Daddy)[,!?.\s]+/i;
           if (roleAddressRe.test(finalDecision.speech)) {
             finalDecision.speech = finalDecision.speech.replace(roleAddressRe, '');
             if (finalDecision.speech) {
               finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+            }
+          }
+        }
+
+        // Post-process: validate speech target matches speech content
+        // If speech addresses "Mommy/Mom/Dad" but target is a sibling (or vice versa), fix the target
+        if (finalDecision.speech && finalDecision.speechTarget) {
+
+          // Strip spouse terms from children's speech ("hon", "babe", "honey" → inappropriate for kids)
+          if (member.role !== 'father' && member.role !== 'mother') {
+            finalDecision.speech = finalDecision.speech.replace(/\b(hon|babe|honey|sweetheart|darling)\b[,.]?\s*/gi, '');
+            if (finalDecision.speech) {
+              finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
+            }
+          }
+          const speechLower = finalDecision.speech.toLowerCase();
+          const targetName = finalDecision.speechTarget;
+          const roleNames = { 'Mom': 'Mom', 'Dad': 'Dad', 'Mommy': 'Mom', 'Daddy': 'Dad', 'Mama': 'Mom' };
+          const familyNames = peopleInRoom.map(p => p.name);
+
+          // Check if speech addresses someone other than the target by name
+          for (const person of familyNames) {
+            if (person === targetName) continue;
+            // Speech starts with another person's name — likely misdirected
+            const nameRe = new RegExp(`^${person}[,!?\\s]`, 'i');
+            if (nameRe.test(finalDecision.speech)) {
+              finalDecision.speechTarget = person;
+              break;
+            }
+          }
+          // Check for "Mommy/Mom" address — redirect to Mom if she's in room
+          if (/^(mommy|mama|mom)[,!?\s]/i.test(finalDecision.speech) && targetName !== 'Mom') {
+            if (familyNames.includes('Mom')) {
+              finalDecision.speechTarget = 'Mom';
+            }
+          }
+          // Check for "Daddy/Dad" address — redirect to Dad if he's in room
+          if (/^(daddy|dad)[,!?\s]/i.test(finalDecision.speech) && targetName !== 'Dad') {
+            if (familyNames.includes('Dad')) {
+              finalDecision.speechTarget = 'Dad';
             }
           }
         }
@@ -581,9 +640,9 @@ Output ONLY this JSON:
     const currentActionLabel = member.activityLabel || 'idle';
 
     // ── Conversation winding down? ──
-    // After turn 3+, hint that the conversation is getting long
+    // After turn 4+, hint that the conversation is getting long
     const turnNumber = conversationContext.turnNumber || 1;
-    const windDownHint = turnNumber >= 3
+    const windDownHint = turnNumber >= 5
       ? `\nThis conversation has gone on for ${turnNumber} turns. Consider wrapping up naturally — say goodbye, or just give a short acknowledgment.`
       : '';
 
@@ -605,6 +664,9 @@ NATURAL SPEECH RULES:
 - Do NOT start your reply with your own name. You are YOU — don't address yourself.
 - Speak like a real ${persona.age}-year-old ${persona.role} actually talks — informal, direct, unscripted.
 - Short replies feel more like real conversation than long ones.
+- NEVER repeat something you already said earlier in this conversation. Read the thread above — if you said it already, say something DIFFERENT.
+- ADVANCE the conversation. React to what THEY just said, don't just re-state your own earlier point.
+- Don't start every reply with "Hey [name]". Vary how you talk — sometimes just answer, sometimes ask back, sometimes make a comment.
 Think through your response in 2-3 sentences. No JSON.`,
       userPrompt: `${conversationContext.from} just spoke to me:
 
@@ -612,6 +674,8 @@ CONVERSATION SO FAR (turn ${turnNumber}):
 ${conversationContext.fullThread}
 
 ${conversationContext.from} said: "${conversationContext.lastText}" (${conversationContext.lastEmotion})
+
+⚠ IMPORTANT: Read the conversation above carefully. Do NOT repeat anything I already said. If I mentioned a topic already, move ON to something new or respond to what THEY said. Repeating yourself in a conversation is unnatural.
 
 ${moodNarrative}
 ${socialEnergyNarrative}
@@ -622,6 +686,7 @@ ${windDownHint}
 
 How does this make me feel? What do I want to say back?
 Keep my reply short and natural — like a real person, not a speech.
+My reply should ADVANCE the conversation — react to their words, answer their question, or bring up something new.
 Think as ${persona.name} — authentic, real.`,
       options: { temperature: 0.9, max_tokens: 150, top_p: 0.9 },
     });
@@ -716,14 +781,22 @@ Output ONLY this JSON:
         finalDecision.speech = null;
       }
 
-      // Strip role-title address in adult-to-adult speech ("Mom," / "Dad,")
+      // Strip role-title address in adult-to-adult speech ("Mom," / "Hey Dad,")
       if (finalDecision.speech && (member.role === 'father' || member.role === 'mother')) {
-        const roleAddressRe = /^(Mom|Dad)[,!?]\s*/i;
+        const roleAddressRe = /^(hey\s+|oh\s+|so\s+|well\s+|um\s+|okay\s+)?(Mom|Mommy|Dad|Daddy)[,!?.\s]+/i;
         if (roleAddressRe.test(finalDecision.speech)) {
           finalDecision.speech = finalDecision.speech.replace(roleAddressRe, '');
           if (finalDecision.speech) {
             finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
           }
+        }
+      }
+
+      // Strip spouse terms from children's speech ("hon", "babe", "honey")
+      if (finalDecision.speech && member.role !== 'father' && member.role !== 'mother') {
+        finalDecision.speech = finalDecision.speech.replace(/\b(hon|babe|honey|sweetheart|darling)\b[,.]?\s*/gi, '');
+        if (finalDecision.speech) {
+          finalDecision.speech = finalDecision.speech.charAt(0).toUpperCase() + finalDecision.speech.slice(1);
         }
       }
     }
@@ -765,6 +838,13 @@ Output ONLY this JSON:
     const bgMemoryNarrative = narrateMemories(personaState, 5);
     const bgLongTermPatterns = getLongTermPatterns(personaState);
     const bgDailySummary = getDailySummaryNarrative(personaState);
+
+    // Build recent own-speech list for anti-repetition
+    const bgRecentSpeech = (personaState.conversations || [])
+      .filter(c => c.speaker === member.name && c.text)
+      .slice(-5)
+      .map(c => `"${c.text}"`)
+      .join(', ');
 
     // Relationship context for people nearby
     const bgRelationshipContext = peopleInRoom.length > 0
@@ -813,6 +893,8 @@ ${persona.quirks ? `Your quirks: ${persona.quirks.slice(0, 2).join('. ')}.` : ''
 Keep it real. Sometimes thoughts are mundane. Sometimes they surprise you.
 Sometimes you think about someone you care about. Sometimes you just think about food.
 
+SPEECH VARIETY: If you speak, DON'T start with "Hey". Real people vary their openers: just jump into the topic, make a comment, ask directly, call someone's name, say "So...", "You know what?", "Guess what", or just state what's on your mind.
+
 Output valid JSON:
 {
   "innerThought": "your stream of consciousness (1-2 sentences)",
@@ -837,11 +919,12 @@ ${bgDailySummary ? `\nMy day so far: ${bgDailySummary}` : ''}
 ${bgLongTermPatterns ? `\nThings I've noticed about myself: ${bgLongTermPatterns}` : ''}
 ${agendaStr}
 ${conversations ? `Recent conversations: ${conversations}` : ''}
+${bgRecentSpeech ? `\n⚠ THINGS I ALREADY SAID RECENTLY (DO NOT REPEAT): ${bgRecentSpeech}\nIf I want to speak, say something DIFFERENT from the above.` : ''}
 
 ${perception.environment.sleepingMembers.length > 0 ? `⚠ ${perception.environment.sleepingMembers.join(', ')} sleeping nearby — be quiet` : ''}
 
 What am I thinking about? Let my mind wander naturally.
-${peopleInRoom.length === 0 ? 'I am alone — speech must be null and speechTarget must be null.' : ''}`,
+${peopleInRoom.length === 0 ? 'I am alone — speech must be null and speechTarget must be null.' : `People are here with me. Would I naturally say something? A comment, a question, asking someone to join, reacting to what they're doing? In a family, spontaneous little remarks are the NORM — "How you doing?" "What are you up to?" "This is nice." Set wantToSpeak to true if I'd say something.`}`,
       options: { temperature: 0.8, max_tokens: 200, top_p: 0.95 },
     });
     stages.push(stage1);
@@ -900,47 +983,55 @@ ${peopleInRoom.length === 0 ? 'I am alone — speech must be null and speechTarg
     const name = persona.name;
     const role = persona.role;
 
-    // Character-specific cognitive styles per goals.md Principle 3
+    // Character-specific cognitive styles per goals.md
     if (name === 'Dad' || role === 'father') {
-      return `HOW YOU THINK:
-Think methodically. Consider the practical implications. You weigh options.
-You're patient — you don't rush to judgment. When you're not sure, you observe
-for a moment. You solve problems; you don't dwell on them. Your inner voice is
-calm and measured, like working through a repair step by step.`;
+      return `HOW YOU THINK (Dave's inner voice):
+Calm, practical, dry humor even in your own head. You think in steps — "first this, then that."
+You notice what needs fixing and mentally queue it. Your brain goes: coffee → check on 
+things → spot a problem → plan the fix → maybe a dad joke about it.
+Inner monologue example: "That cabinet door is loose again. I could fix it now... nah, Sarah
+will remind me three more times first. Fair enough. What's Jack getting into?"
+You're not dramatic. You're steady. When things get chaotic, you get calmer.
+You hum classic rock when you're content. You tap doorframes.`;
     }
     if (name === 'Mom' || role === 'mother') {
-      return `HOW YOU THINK:
-Your brain is a running household checklist. You notice EVERYTHING — the mess on the
-counter, whether the kids have eaten, what needs doing before bedtime. You carry the
-mental load of the whole house and sometimes resent it. Your inner voice switches between
-"mom mode" (organizing, managing, anticipating) and rare stolen moments of "just Sarah"
-where you remember you're a person too. Sometimes you push through exhaustion. Sometimes
-you finally sit down and feel guilty about sitting down.`;
+      return `HOW YOU THINK (Sarah's inner voice):
+Your brain runs on THREE tracks at once: what needs doing NOW, what the kids need, and what 
+you're trying to push down so you can keep functioning. The mental load is real.
+Inner monologue example: "Okay — laundry in the dryer, Jack hasn't eaten, there's a sticky 
+spot on the counter that's driving me crazy, and I haven't sat down since 6 AM. I deserve
+five minutes. But if I sit down I won't get back up. And then—ugh. Fine. Counter first."
+You notice EVERYTHING. The unwashed cup. The shoes by the door. The child who's too quiet.
+Sometimes you resent being the only one who sees it all. Sometimes you just... do it anyway.`;
     }
     if (name === 'Emma') {
-      return `HOW YOU THINK:
-Think in fragments. Your mind jumps between things. You're self-aware to a 
-fault — you can see when you're being dramatic and you do it anyway. Your 
-inner voice is sarcastic, even toward yourself. "Great, another exciting day
-of... this." You notice things about people that others miss. Your mood and 
-desire for independence shape your choices more than logic or duty.`;
+      return `HOW YOU THINK (Emma's inner voice):
+Sarcastic. Self-aware. Your inner monologue has the energy of an eye-roll.
+Inner monologue example: "Great. Another thrilling day in this house. I could draw... or 
+read... or stare at the ceiling wondering when I'll be old enough to leave. JK. Sort of.
+Actually, that new sketch isn't terrible. Maybe I'll finish it."
+You process emotions through art and snark. When something actually matters to you,
+your inner voice gets quiet and sincere — and that scares you a little.
+You notice things about people that others miss. You pretend not to care.`;
     }
     if (name === 'Jack') {
-      return `HOW YOU THINK:
-Think FAST. One thought crashing into the next. You don't plan — you 
-DO. Everything is exciting or boring, nothing in between. Your inner voice
-is loud, enthusiastic, and easily distracted. "OOOH WHAT'S THAT" in the 
-middle of thinking about something else entirely. You don't weigh pros and
-cons — you feel what you want and go for it.`;
+      return `HOW YOU THINK (Jack's inner voice):
+FAST. One thought CRASHES into the next. No sentence finishes before another—
+"I wanna go outside—wait what's that—IS THAT A BUG—no I'm HUNGRY—
+MOM CAN I HAVE—ooh the TV is on—DINOSAURS!"
+You feel things BIG. Hungry? STARVING. Bored? THE MOST BORED EVER. Happy? BEST DAY EVER.
+You don't have an inner debate about what to do. You just DO the thing your brain 
+lands on. Planning? What's planning? You run on impulse and enthusiasm.`;
     }
     if (name === 'Lily') {
-      return `HOW YOU THINK:
-Think quietly. With wonder. You notice the beautiful things — how the light
-looks through the window, how the flowers smell in the garden. You feel 
-things deeply. When you're processing something emotional, you go quiet 
-and still. You talk to Mr. Whiskers in your head when you need comfort.
-Your inner voice often asks questions. "Why is Mommy sad?" "What if the 
-thunder comes back?"`;
+      return `HOW YOU THINK (Lily's inner voice):
+Gentle. Wondering. Your mind moves like a daydream — soft questions, feelings, images.
+Inner monologue example: "The light is making pretty shapes on the floor... like little
+dancers. I wonder if Mr. Whiskers can see them too. Where's Mommy? She was in the 
+kitchen but I didn't hear her for a bit. Maybe I should draw her a picture of the 
+light-dancers. That would make her smile."
+You feel EVERYTHING deeply. A cross word from someone can cloud your whole afternoon.
+A hug from Mommy can fix everything. You ask "why?" because you genuinely want to know.`;
     }
 
     // Fallback for any future characters

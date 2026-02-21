@@ -51,7 +51,18 @@ class GameSimulation {
       }
       if (hoursAwake > 0) {
         const { decayNeeds } = require('./InteractionData');
-        return { ...m, needs: decayNeeds(m.needs, hoursAwake, startHour, m.name) };
+        const decayed = decayNeeds(m.needs, hoursAwake, startHour, m.name);
+        // ── Cap minimum needs — characters would have eaten, rested, etc. during the day ──
+        // Without this, Lily's comfort hits 0 by evening because 12hrs of pure decay
+        // simulates a day where she never sat on the couch, got a hug, or played.
+        const needsFloor = { energy: 20, hunger: 15, hydration: 20, hygiene: 25,
+                             bladder: 15, fun: 20, social: 20, comfort: 25 };
+        for (const [key, floor] of Object.entries(needsFloor)) {
+          if (decayed[key] !== undefined && decayed[key] < floor) {
+            decayed[key] = floor;
+          }
+        }
+        return { ...m, needs: decayed };
       }
       return m;
     });
@@ -141,17 +152,18 @@ class GameSimulation {
 
     // ── Parent-presence comfort boost for distressed children ──
     // When a parent is in the same room as a child with low comfort,
-    // the child's comfort slowly recovers — being near a caregiver is naturally soothing.
+    // the child's comfort recovers — being near a caregiver is naturally soothing.
+    // Rate must exceed the fastest comfort decay (Lily: 5.6 * 1.3 = 7.28/hr) to actually help.
     const parentRooms = new Set(
       this.family.filter(m => m.role === 'father' || m.role === 'mother').map(m => m.currentRoom)
     );
     const gameHoursElapsed = dt / 3600;
     for (const child of this.family) {
       if ((child.role === 'son' || child.role === 'daughter') &&
-          child.needs && child.needs.comfort < 30 &&
+          child.needs && child.needs.comfort < 50 &&
           parentRooms.has(child.currentRoom)) {
-        // +5 comfort per game-hour while parent is present
-        child.needs.comfort = Math.min(30, child.needs.comfort + 5 * gameHoursElapsed);
+        // +20 comfort per game-hour while parent is present (net +12.7/hr for Lily)
+        child.needs.comfort = Math.min(50, child.needs.comfort + 20 * gameHoursElapsed);
       }
     }
 
@@ -692,9 +704,22 @@ class GameSimulation {
           this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
           this.agenticEngine.stats.fallbackDecisions++;
         } else {
-          // Command the family member to perform the chosen interaction
-          // For created actions, pass the full classified action data
-          if (resolved.isCreatedAction && resolved.createdActionData) {
+          // If character was interrupted from PERFORMING and the conversation pipeline
+          // chose the SAME action they were already doing, restore them to PERFORMING
+          // without restarting the activity timer. This preserves activity continuity.
+          const wasPerforming = member.currentInteraction?.id && 
+            resolved.action === member.currentInteraction.id &&
+            member.interactionTimer > 0;
+          
+          if (wasPerforming) {
+            // Restore to performing — keep interaction state, just update activity label
+            this.family[i] = {
+              ...member,
+              state: 'performing',
+              activityLabel: member.currentInteraction.label || member.activityLabel,
+              _thinkingRealStart: null,
+            };
+          } else if (resolved.isCreatedAction && resolved.createdActionData) {
             this.family[i] = commandFamilyMember(this.family[i], resolved.action, resolved.createdActionData);
           } else {
             this.family[i] = commandFamilyMember(this.family[i], resolved.action);
