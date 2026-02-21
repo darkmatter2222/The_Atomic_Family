@@ -76,6 +76,8 @@ class AgenticEngine {
     this.llmClient = new LLMClient(options.llm || {});
     this.socialEngine = new SocialEngine();
     this.pipeline = new ReasoningPipeline(this.llmClient);
+    this.worldState = null; // Set by GameSimulation after construction
+    this.weatherSystem = null; // Set by GameSimulation after construction
 
     // Per-character persona state (dynamic: mood, memory, conversations)
     this.personaStates = {};
@@ -134,6 +136,14 @@ class AgenticEngine {
 
     // ── Room time tracking (when each character entered their current room) ──
     this.roomEntryTime = {};       // memberName → { room, enteredAt (Date.now()) }
+
+    // ── Parental attention tracking (goals.md: "kid who gets LEAST attention acts out") ──
+    this.attentionTracker = {
+      // Minutes of direct interaction per parent-child pair today
+      // Keys: "Dad→Jack", "Mom→Lily", etc.
+      pairMinutes: {},
+      lastReset: Date.now(),
+    };
 
     // ── Speech deduplication — prevent background thinking parroting ──
     this.recentSpeechTexts = [];   // [{ text, speaker, timestamp }] — global recent speech
@@ -536,6 +546,26 @@ class AgenticEngine {
             decision.emotion, room, this.personaStates, family
           );
 
+          // ── Track parental attention (goals.md: attention is zero-sum) ──
+          if (resolvedTarget) {
+            const isParentToChild = (
+              (member.role === 'father' || member.role === 'mother') &&
+              family.some(f => f.name === resolvedTarget && (f.role === 'son' || f.role === 'daughter'))
+            );
+            const isChildToParent = (
+              (member.role === 'son' || member.role === 'daughter') &&
+              family.some(f => f.name === resolvedTarget && (f.role === 'father' || f.role === 'mother'))
+            );
+            if (isParentToChild) {
+              const key = `${memberName}→${resolvedTarget}`;
+              this.attentionTracker.pairMinutes[key] = (this.attentionTracker.pairMinutes[key] || 0) + 1;
+            }
+            if (isChildToParent) {
+              const key = `${resolvedTarget}→${memberName}`;
+              this.attentionTracker.pairMinutes[key] = (this.attentionTracker.pairMinutes[key] || 0) + 0.5;
+            }
+          }
+
           // ── Record social memory for BOTH participants (asymmetric emotions) ──
           if (resolvedTarget && this.personaStates[resolvedTarget]) {
             recordSocialMemory(
@@ -673,6 +703,44 @@ class AgenticEngine {
     // Attach room time info so the pipeline can access it
     personaState._roomTimeMinutes = this.getRoomTimeMinutes(name);
 
+    // Attach unresolved conversation topics (goals.md: loose threads resurface)
+    personaState._unresolvedTopics = this.socialEngine.getUnresolvedTopics(name);
+
+    // Attach attention data for children (who's getting neglected?)
+    if (member.role === 'son' || member.role === 'daughter') {
+      const attFromDad = this.attentionTracker.pairMinutes[`Dad→${name}`] || 0;
+      const attFromMom = this.attentionTracker.pairMinutes[`Mom→${name}`] || 0;
+      const siblings = family.filter(f => f.name !== name && (f.role === 'son' || f.role === 'daughter'));
+      const siblingAtt = siblings.map(s => ({
+        name: s.name,
+        fromDad: this.attentionTracker.pairMinutes[`Dad→${s.name}`] || 0,
+        fromMom: this.attentionTracker.pairMinutes[`Mom→${s.name}`] || 0,
+      }));
+      const maxSibAtt = Math.max(1, ...siblingAtt.map(s => s.fromDad + s.fromMom));
+      const myAtt = attFromDad + attFromMom;
+      personaState._attentionDeficit = myAtt < maxSibAtt * 0.5; // Getting less than half of what a sibling gets
+      personaState._parentalAttention = { fromDad: attFromDad, fromMom: attFromMom, siblingComparison: siblingAtt };
+    }
+
+    // Attach attention summary for parents (goals.md: attention is zero-sum, parents should feel the pull)
+    if (member.role === 'father' || member.role === 'mother') {
+      const children = family.filter(f => f.role === 'son' || f.role === 'daughter');
+      const parentKey = name === 'Dad' ? 'Dad' : 'Mom';
+      const childAttention = children.map(c => ({
+        name: c.name,
+        minutesWithMe: this.attentionTracker.pairMinutes[`${parentKey}→${c.name}`] || 0,
+      }));
+      const totalMinutes = childAttention.reduce((s, c) => s + c.minutesWithMe, 0);
+      const neglected = childAttention
+        .filter(c => totalMinutes > 5 && c.minutesWithMe < totalMinutes * 0.2)
+        .map(c => c.name);
+      personaState._childAttentionSummary = {
+        distribution: childAttention,
+        neglectedChildren: neglected,
+        totalMinutes,
+      };
+    }
+
     const agenda = this.agendas[name];
     const conversationContext = this.socialEngine.getConversationContext(name);
 
@@ -684,7 +752,7 @@ class AgenticEngine {
 
     const promise = this.pipeline.fullPipeline(
       member, family, gameTime, roomLights,
-      personaState, this.recentEvents, agenda, conversationContext
+      personaState, this.recentEvents, agenda, conversationContext, this.worldState, this.weatherSystem
     ).then(result => {
       const elapsed = result.totalElapsed;
       const totalTokens = result.totalTokens;
@@ -788,7 +856,7 @@ class AgenticEngine {
 
       const bgPromise = this.pipeline.backgroundThink(
         member, family, gameTime, roomLights,
-        personaState, this.recentEvents, agenda
+        personaState, this.recentEvents, agenda, this.worldState, this.weatherSystem
       ).then(result => {
         this._recordTokens(member.name, result.totalTokens);
         this.stats.backgroundThinks = (this.stats.backgroundThinks || 0) + 1;
@@ -969,12 +1037,16 @@ class AgenticEngine {
       if (plan && plan.length > 0) {
         this.agendas[member.name] = {
           plan,
+          mustDo: plan._mustDo || [],
+          wantToDo: plan._wantToDo || [],
+          anticipatedObstacles: plan._anticipatedObstacles || [],
           completed: [],
           generatedForDay: dayKey,
           gameTime: gameTime.toISOString(),
           _generating: false,
         };
-        addMemory(personaState, 'thought', `Made a plan for today: ${plan.map(p => p.activity).join(', ')}`, 4);
+        const mustDoStr = (plan._mustDo || []).length > 0 ? ` Must do: ${plan._mustDo.join(', ')}.` : '';
+        addMemory(personaState, 'thought', `Made a plan for today: ${plan.map(p => p.activity).join(', ')}.${mustDoStr}`, 4);
         console.log(`[AgenticEngine] ${member.name} planned their day: ${plan.length} items`);
 
         logger.logAgenda({
@@ -1317,6 +1389,9 @@ class AgenticEngine {
           done: item.done || false,
           completedAt: item.completedAt || null,
         })),
+        mustDo: agenda.mustDo || [],
+        wantToDo: agenda.wantToDo || [],
+        anticipatedObstacles: agenda.anticipatedObstacles || [],
         completed: (agenda.completed || []).length,
         total: (agenda.plan || []).length,
         generatedForDay: agenda.generatedForDay,

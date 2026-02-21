@@ -201,7 +201,7 @@ function recordSocialMemory(subjectState, targetState, description, subjectEmoti
  * @param {number} maxEntries - How many memories to include
  * @returns {string} First-person memory narrative
  */
-function narrateMemories(personaState, maxEntries = 12) {
+function narrateMemories(personaState, maxEntries = 12, currentMood = null) {
   const name = personaState.name;
   const memPersonality = MEMORY_PERSONALITY[name] || MEMORY_PERSONALITY.Dad;
   const memories = personaState.emotionalMemories || personaState.memories || [];
@@ -210,7 +210,11 @@ function narrateMemories(personaState, maxEntries = 12) {
     return `WHAT'S ON YOUR MIND:\n${_getEmptyMemoryFlavor(name)}`;
   }
 
-  // Score and sort memories by salience (importance × recency × personality)
+  // Determine current mood sentiment for mood-congruent recall
+  // (goals.md: when angry, grievances surface; when happy, positive memories surface)
+  const moodSentiment = currentMood ? _classifySentiment(currentMood) : null;
+
+  // Score and sort memories by salience (importance × recency × personality × mood)
   const scored = memories.map(m => {
     const ageMinutes = (Date.now() - m.timestamp) / 60000;
     const ageHours = ageMinutes / 60;
@@ -226,12 +230,27 @@ function narrateMemories(personaState, maxEntries = 12) {
     const sentimentType = _classifySentiment(m.emotion);
     const personalityBoost = memPersonality.retention[sentimentType] || 1.0;
 
+    // ── Mood-congruent recall bias ──
+    // Current mood colors which memories surface — angry people recall slights,
+    // happy people recall good times.
+    let moodCongruence = 1.0;
+    if (moodSentiment) {
+      if (sentimentType === moodSentiment) {
+        moodCongruence = 1.4; // Same-valence memories surface more easily
+      } else if (
+        (moodSentiment === 'positive' && sentimentType === 'negative') ||
+        (moodSentiment === 'negative' && sentimentType === 'positive')
+      ) {
+        moodCongruence = 0.65; // Opposite-valence memories suppressed
+      }
+    }
+
     // Random jitter — memory is imperfect, different things surface each time
     const jitter = 0.8 + Math.random() * 0.4;
 
     return {
       memory: m,
-      salience: recencyScore * importanceScore * personalityBoost * jitter,
+      salience: recencyScore * importanceScore * personalityBoost * moodCongruence * jitter,
     };
   });
 
@@ -244,6 +263,9 @@ function narrateMemories(personaState, maxEntries = 12) {
 
   const lines = [`WHAT'S ON YOUR MIND (what you remember, how it felt):`];
   lines.push(`(${memPersonality.desc})`);
+  if (currentMood && currentMood !== 'neutral') {
+    lines.push(`(Current mood: ${currentMood} — this colors what surfaces)`);
+  }
 
   for (const { memory } of topMemories) {
     const ageMinutes = (Date.now() - memory.timestamp) / 60000;
@@ -293,13 +315,52 @@ function processNewDay(personaState) {
   const memPersonality = MEMORY_PERSONALITY[name] || MEMORY_PERSONALITY.Dad;
 
   if (personaState.emotionalMemories) {
-    // Keep only high-importance, high-emotion memories from yesterday
+    // Personality-filtered overnight pruning (goals.md: memory is edited on sleep)
+    // Tier 1: <2hr always keep (still "fresh")
+    // Tier 2: 2-8hr personality-filtered (some events consolidated, some forgotten)
+    // Tier 3: >8hr strict filter (only strong emotions survive the night)
     personaState.emotionalMemories = personaState.emotionalMemories.filter(m => {
       const ageHours = (Date.now() - m.timestamp) / 3600000;
-      if (ageHours < 2) return true; // recent stuff always stays
-      // Overnight filter: only strong emotions survive
-      return (m.importance || 0) >= 4 && (m.emotionIntensity || 0) > 1.3;
+      if (ageHours < 2) return true;
+
+      const sentimentType = _classifySentiment(m.emotion);
+      const retentionMult = memPersonality.retention[sentimentType] || 1.0;
+      const effectiveImportance = (m.importance || 0) * retentionMult;
+
+      if (ageHours < 8) {
+        // Mid-range: personality determines the bar
+        // Traumatic/intense emotions get a pass (guilt, shame, fear linger in dreams)
+        const traumaEmotions = ['guilt', 'shame', 'fear'];
+        if (traumaEmotions.includes(m.emotion) && (m.emotionIntensity || 0) > 1.3) return true;
+        return effectiveImportance >= 3;
+      }
+
+      // Old memories: only the strongest survive
+      // Traumatic events with high persistence persist
+      const traumaEmotions = ['guilt', 'shame', 'fear'];
+      if (traumaEmotions.includes(m.emotion) && (m.importance || 0) >= 4) return true;
+
+      return effectiveImportance >= 4.5 && (m.emotionIntensity || 0) > 1.3;
     });
+
+    // Personality-based overnight editing: slightly adjust importance scores
+    // (goals.md: "you edit memory every time you tell it")
+    for (const m of personaState.emotionalMemories) {
+      const ageHours = (Date.now() - m.timestamp) / 3600000;
+      if (ageHours < 2) continue;
+
+      const sentimentType = _classifySentiment(m.emotion);
+      const retentionMult = memPersonality.retention[sentimentType] || 1.0;
+
+      // Memories drift toward the character's bias over time
+      // Mom's negative memories get slightly more important (she catalogs everything)
+      // Jack's mundane memories fade even faster
+      if (retentionMult > 1.2) {
+        m.importance = Math.min(5, (m.importance || 3) + 0.1);
+      } else if (retentionMult < 0.5) {
+        m.importance = Math.max(1, (m.importance || 3) - 0.2);
+      }
+    }
   }
 }
 
@@ -358,12 +419,99 @@ function _getEmptyMemoryFlavor(name) {
   return flavors[name] || 'A new moment. What now?';
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  MEMORY DISTORTION SYSTEM (goals.md)
+//  "Memory isn't a database — it's a story you tell yourself.
+//   And you edit it every time you tell it."
+//
+//  Over time, memories subtly shift:
+//  - Positive memories get slightly more positive
+//  - Negative memories get more extreme OR get minimized (personality-dependent)
+//  - Details blur but emotional core persists
+//  - Kids' memories distort faster than adults'
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Apply memory distortion to a character's emotional memories.
+ * Called periodically (e.g., during daily summary processing or new-day).
+ * Memories drift based on personality and time elapsed.
+ *
+ * @param {object} personaState - Character state
+ */
+function distortMemories(personaState) {
+  const name = personaState.name;
+  const memPersonality = MEMORY_PERSONALITY[name] || MEMORY_PERSONALITY.Dad;
+  const memories = personaState.emotionalMemories || [];
+  if (memories.length === 0) return;
+
+  const now = Date.now();
+
+  for (const m of memories) {
+    const ageHours = (now - m.timestamp) / 3600000;
+    if (ageHours < 1) continue; // Too recent to distort
+
+    // Distortion rate: faster for kids, slower for adults
+    const ageMod = _getAgeDistortionRate(name);
+    const distortionChance = Math.min(0.3, ageHours * 0.01 * ageMod);
+
+    if (Math.random() > distortionChance) continue;
+
+    // Apply personality-specific distortion
+    const sentiment = _classifySentiment(m.emotion);
+
+    if (memPersonality.style === 'emotional-cataloger') {
+      // Mom: negative memories get slightly MORE important over time (she catalogs)
+      if (sentiment === 'negative') {
+        m.importance = Math.min(5, (m.importance || 3) + 0.15);
+        m.emotionIntensity = Math.min(2.0, (m.emotionIntensity || 1) + 0.05);
+      }
+    } else if (memPersonality.style === 'practical') {
+      // Dad: emotional details fade, facts remain — emotion intensity drops
+      m.emotionIntensity = Math.max(0.5, (m.emotionIntensity || 1) - 0.1);
+    } else if (memPersonality.style === 'selective-intense') {
+      // Emma: negative memories intensify (teen angst), mundane evaporates
+      if (sentiment === 'negative') {
+        m.emotionIntensity = Math.min(2.0, (m.emotionIntensity || 1) + 0.1);
+      } else if (sentiment === 'mundane') {
+        m.importance = Math.max(1, (m.importance || 3) - 0.3);
+      }
+    } else if (memPersonality.style === 'vivid-but-fleeting') {
+      // Lily: everything fades fast but the emotional core persists in simplified form
+      m.importance = Math.max(1, (m.importance || 3) - 0.1);
+      // Emotions simplify: nuanced emotions become broader
+      if (m.emotion === 'frustration') m.emotion = 'anger';
+      if (m.emotion === 'contentment') m.emotion = 'joy';
+    } else if (memPersonality.style === 'goldfish-with-exceptions') {
+      // Jack: rapid importance decay unless REALLY exciting/scary
+      if (m.importance < 4) {
+        m.importance = Math.max(1, (m.importance || 3) - 0.2);
+      }
+    }
+
+    // Universal: very old memories lose detail (importance rounds toward average)
+    if (ageHours > 12) {
+      const currentImportance = m.importance || 3;
+      m.importance = currentImportance + (3 - currentImportance) * 0.05;
+    }
+  }
+}
+
+/**
+ * Get age-based distortion rate multiplier.
+ * Kids' memories distort faster.
+ */
+function _getAgeDistortionRate(name) {
+  const rates = { Jack: 2.0, Lily: 1.8, Emma: 1.3, Mom: 0.8, Dad: 0.9 };
+  return rates[name] || 1.0;
+}
+
 module.exports = {
   recordMemory,
   recordSocialMemory,
   narrateMemories,
   getMemoriesInvolving,
   processNewDay,
+  distortMemories,
   MEMORY_PERSONALITY,
   EMOTION_PERSISTENCE,
 };

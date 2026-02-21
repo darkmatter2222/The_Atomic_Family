@@ -334,8 +334,12 @@ function resetDailyTracking(name) {
 // ═══════════════════════════════════════════════════════════════
 
 const MAX_ARCHIVED_DAYS = 7;
-const PATTERN_EXTRACTION_INTERVAL_DAYS = 3; // Extract patterns every N archived days
+const PATTERN_EXTRACTION_INTERVAL_DAYS = 7; // Extract patterns every N archived days (goals.md: 7-day cycle)
 const PATTERN_MAX_TOKENS = 300;
+
+// ── Habit formation tracking (goals.md) ──────────────────────────
+// Track repeated actions to detect emerging habits
+const habitTrackers = {}; // characterName → { actionCounts: {}, streaks: {} }
 
 // Track when we last extracted patterns per character
 const lastPatternExtractionDay = {}; // characterName → archived day count
@@ -502,6 +506,117 @@ function getLongTermPatterns(personaState) {
   return personaState.longTermPatterns || '';
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  HABIT FORMATION SYSTEM (goals.md)
+//  Repeated behaviors across days become habits that are harder
+//  to break and surface in prompts automatically.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Track an action for habit formation.
+ * Called when a character performs an activity.
+ *
+ * @param {string} name - Character name
+ * @param {string} action - Activity ID
+ * @param {number} gameHour - Current game hour
+ */
+function trackActionForHabit(name, action, gameHour) {
+  if (!habitTrackers[name]) {
+    habitTrackers[name] = { actionCounts: {}, streaks: {}, lastDayActions: {} };
+  }
+  const tracker = habitTrackers[name];
+
+  // Normalize action to a simplified key
+  const key = action.toLowerCase().replace(/[^a-z_]/g, '');
+  if (!key) return;
+
+  // Track daily count
+  tracker.actionCounts[key] = (tracker.actionCounts[key] || 0) + 1;
+
+  // Track time-of-day association (morning/afternoon/evening)
+  const timeSlot = gameHour < 12 ? 'morning' : gameHour < 18 ? 'afternoon' : 'evening';
+  const timeKey = `${key}_${timeSlot}`;
+  tracker.actionCounts[timeKey] = (tracker.actionCounts[timeKey] || 0) + 1;
+}
+
+/**
+ * Process day transition for habit tracking.
+ * Calculates streaks and identifies emerging/established habits.
+ *
+ * @param {string} name - Character name
+ */
+function processHabitDay(name) {
+  if (!habitTrackers[name]) return;
+  const tracker = habitTrackers[name];
+
+  // For each action done today, update streak
+  for (const [action, count] of Object.entries(tracker.actionCounts)) {
+    if (action.includes('_morning') || action.includes('_afternoon') || action.includes('_evening')) continue;
+    if (count > 0) {
+      tracker.streaks[action] = (tracker.streaks[action] || 0) + 1;
+    }
+  }
+
+  // Decay streaks for actions NOT done today
+  for (const [action, streak] of Object.entries(tracker.streaks)) {
+    if (!tracker.actionCounts[action] || tracker.actionCounts[action] === 0) {
+      tracker.streaks[action] = Math.max(0, streak - 1);
+    }
+  }
+
+  // Save today's actions as last-day reference
+  tracker.lastDayActions = { ...tracker.actionCounts };
+  tracker.actionCounts = {};
+}
+
+/**
+ * Get established habits for a character (streak ≥ 3 days).
+ * Returns habit descriptions suitable for LLM prompt injection.
+ *
+ * @param {string} name - Character name
+ * @returns {Array<{action: string, streak: number, strength: string}>}
+ */
+function getEstablishedHabits(name) {
+  if (!habitTrackers[name]) return [];
+  const tracker = habitTrackers[name];
+  const habits = [];
+
+  for (const [action, streak] of Object.entries(tracker.streaks)) {
+    if (streak < 3) continue;
+    if (action.includes('_morning') || action.includes('_afternoon') || action.includes('_evening')) continue;
+
+    const strength = streak >= 7 ? 'deeply ingrained' :
+                     streak >= 5 ? 'strong' :
+                     streak >= 3 ? 'emerging' : 'weak';
+
+    habits.push({
+      action: action.replace(/_/g, ' '),
+      streak,
+      strength,
+    });
+  }
+
+  // Sort by streak descending
+  habits.sort((a, b) => b.streak - a.streak);
+  return habits.slice(0, 8);
+}
+
+/**
+ * Build a habit narrative for prompt injection.
+ *
+ * @param {string} name - Character name
+ * @returns {string|null} Habit narrative or null if no habits
+ */
+function buildHabitNarrative(name) {
+  const habits = getEstablishedHabits(name);
+  if (habits.length === 0) return null;
+
+  const lines = habits.map(h =>
+    `- ${h.action} (${h.strength} habit, ${h.streak} days running)`
+  );
+  return `YOUR HABITS (you tend to do these regularly):\n${lines.join('\n')}`;
+}
+
 module.exports = {
   isDueSummaryUpdate,
   updateDailySummary,
@@ -515,4 +630,8 @@ module.exports = {
   isDuePatternExtraction,
   extractLongTermPatterns,
   getLongTermPatterns,
+  trackActionForHabit,
+  processHabitDay,
+  getEstablishedHabits,
+  buildHabitNarrative,
 };

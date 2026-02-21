@@ -25,6 +25,7 @@ const {
   getCurrentScheduleEntry,
   buildMemorySummary,
   buildConversationSummary,
+  buildConversationHistoryToday,
   buildDailySummary,
   summarizeEmotionalCascade,
   FAMILY_DATA,
@@ -68,14 +69,14 @@ class ReasoningPipeline {
    *
    * @returns {{ stages, finalDecision, totalElapsed, totalTokens, pipelineType, pipelineId }}
    */
-  async fullPipeline(member, allMembers, gameTime, roomLights, personaState, recentEvents, agenda, conversationContext) {
+  async fullPipeline(member, allMembers, gameTime, roomLights, personaState, recentEvents, agenda, conversationContext, worldState, weatherSystem) {
     const pipelineId = `pipeline_${++this.pipelineCount}`;
     const stages = [];
     const pipelineStart = Date.now();
 
     // Build shared context once
     const persona = getPersona(member.name);
-    const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents);
+    const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents, worldState, weatherSystem);
     const recentActionsList = personaState?.recentInteractions?.slice(-15) || [];
     const availableInteractions = getFilteredInteractions(member.role, gameTime, perception, allMembers, recentActionsList);
     const schedule = getCurrentScheduleEntry(member.name, gameTime);
@@ -84,6 +85,7 @@ class ReasoningPipeline {
     const lowestNeed = getLowestNeed(needs);
     const memories = buildMemorySummary(personaState);
     const conversations = buildConversationSummary(personaState);
+    const conversationHistoryToday = buildConversationHistoryToday(personaState, member.name);
     // Build "my own recent speech" for anti-repetition
     const myRecentSpeech = (personaState?.conversations || [])
       .filter(c => c.speaker === member.name)
@@ -119,7 +121,7 @@ class ReasoningPipeline {
     const percNarrative = narratePerception(perception, member.name);
     const needsNarrative = narrateNeeds(member.name, needs, perception.environment.hour);
     const moodNarrative = narrateMood(member.name, personaState.mood, personaState.moodIntensity, personaState.stressLevel, member.needs);
-    const memoryNarrative = narrateMemories(personaState, 10);
+    const memoryNarrative = narrateMemories(personaState, 10, personaState.mood);
     const skillsNarrative = narrateSkills(member.name, member.skills);
     const socialEnergyNarrative = narrateSocialEnergy(
       member.name,
@@ -271,11 +273,32 @@ What's going on right now? What matters most to you? What opportunities or conce
       }
     }
 
-    // Agenda context
+    // Agenda context — use rich mustDo/wantToDo format if available
     const agendaUndonePlan = agenda?.plan?.filter(i => !i.done) || [];
-    const agendaStr = agendaUndonePlan.length > 0
-      ? `Plans I made for today (NOT YET DONE — these compete with immediate impulses): ${agendaUndonePlan.map(i => `${i.time} ${i.activity}`).join(' | ')}`
-      : 'No specific plan today.';
+    const agendaMustDo = agenda?.mustDo || [];
+    const agendaWantToDo = agenda?.wantToDo || [];
+    const agendaObstacles = agenda?.anticipatedObstacles || [];
+    let agendaStr;
+    if (agendaMustDo.length > 0 || agendaWantToDo.length > 0) {
+      const parts = [];
+      if (agendaMustDo.length > 0) parts.push(`MUST: ${agendaMustDo.join(', ')}`);
+      if (agendaWantToDo.length > 0) parts.push(`WANT: ${agendaWantToDo.join(', ')}`);
+      if (agendaObstacles.length > 0) parts.push(`worried about: ${agendaObstacles.join(', ')}`);
+      const scheduledStr = agendaUndonePlan.length > 0
+        ? ` | Scheduled: ${agendaUndonePlan.map(i => `${i.time} ${i.activity}`).join(' | ')}`
+        : '';
+      agendaStr = `Plans I made for today (these compete with immediate impulses): ${parts.join(' | ')}${scheduledStr}`;
+    } else if (agendaUndonePlan.length > 0) {
+      agendaStr = `Plans I made for today (NOT YET DONE — these compete with immediate impulses): ${agendaUndonePlan.map(i => `${i.time} ${i.activity}`).join(' | ')}`;
+    } else {
+      agendaStr = 'No specific plan today.';
+    }
+
+    // Unresolved conversation topics (goals.md: loose threads nag at you)
+    const unresolvedTopics = personaState._unresolvedTopics || [];
+    const unresolvedStr = unresolvedTopics.length > 0
+      ? `Unfinished business (conversations that ended abruptly — these nag at me):\n${unresolvedTopics.map(t => `- ${t.withCharacter}: ${t.text}`).join('\n')}`
+      : '';
 
     // Schedule context — what the character's typical routine says they should be doing
     let scheduleStr = '';
@@ -291,15 +314,15 @@ What's going on right now? What matters most to you? What opportunities or conce
       }
     }
 
-    // Build relationship awareness for people in room
+    // Build relationship awareness — always include, not just when people are present
+    // (characters think about family even when alone)
     const relationshipData = persona.relationships || {};
     const recentEventsMap = {};
-    for (const p of peopleInRoom) {
-      recentEventsMap[p.name] = getMemoriesInvolving(personaState, p.name, 60);
+    const allFamilyNames = ['Dad', 'Mom', 'Emma', 'Lily', 'Jack'].filter(n => n !== member.name);
+    for (const n of allFamilyNames) {
+      recentEventsMap[n] = getMemoriesInvolving(personaState, n, 60);
     }
-    const relationshipNarrative = peopleInRoom.length > 0
-      ? narrateRelationships(member.name, relationshipData, recentEventsMap, perception.environment.hour)
-      : '';
+    const relationshipNarrative = narrateRelationships(member.name, relationshipData, recentEventsMap, perception.environment.hour);
 
     // ── Build descriptive activity summary for Deliberator ──
     // Instead of a numbered menu (anti-pattern), group activities naturally
@@ -339,6 +362,13 @@ If you're absorbed in what you're currently doing — it's going well, you're al
 just ENJOYING it — you might resist switching. A book keeps you reading. Cooking demands your 
 attention. Half-finished things have gravitational pull. Let yourself stay absorbed sometimes.
 
+AGENDA vs IMPULSE (goals.md: plans compete with spontaneity):
+- If you have a plan for this time, you FEEL the pull to follow it — but you might not.
+- If something more interesting or urgent comes up, the plan can wait.
+- Personality matters: organized people stick to plans; impulsive people follow whims.
+- Unfinished business tugs at you — that conversation that got cut short, that promise you made.
+- The tension between "should" and "want" IS the decision. Let it play out honestly.
+
 ${this._getCharacterReasoningStyle(persona)}
 No JSON — just your honest inner monologue in 4-6 sentences. What are you thinking? What are you going to do?`,
       userPrompt: `HOW I SEE THINGS RIGHT NOW:
@@ -361,10 +391,12 @@ CONTEXT:
 - ${agendaStr}
 ${scheduleStr ? `- ${scheduleStr}` : ''}
 - Today so far: ${dailySummary}
-- Recent conversations: ${conversations}
+- Today's conversations:
+${conversationHistoryToday || conversations || 'No conversations yet today.'}
 ${peopleInRoom.length > 0 ? `- ${peopleInRoom.map(p => p.name).join(', ')} ${peopleInRoom.length > 1 ? 'are' : 'is'} here with me` : '- Nobody else is here'}
 ${perception.environment.isDark ? '- The room is dark! Maybe turn on lights or go somewhere else.' : ''}
 ${personaState.nextIntention ? `- I was loosely planning to: ${personaState.nextIntention}` : ''}
+${unresolvedStr ? `\n${unresolvedStr}` : ''}
 
 What am I going to do? Not what's "optimal" — what feels RIGHT for me in this moment?
 Think through 2-3 options honestly, then decide. I can stay here OR go somewhere else.`,
@@ -378,13 +410,14 @@ Think through 2-3 options honestly, then decide. I can stay here OR go somewhere
 
     // ──────────────────────────────────────────────────────
     // STAGE 3: SOCIAL REASONING  (Social Agent)
-    //   Runs if other people are present OR if character is a young child (who talk to themselves).
-    //   "What should I say?"
+    //   Always runs — with people: what to say; alone: self-talk/inner monologue.
+    //   (goals.md: self-talk when alone produces thought bubbles)
+    //   "What should I say? What am I thinking?"
     // ──────────────────────────────────────────────────────
     let socialContext = null;
     const isYoungChild = persona.age < 10;
     const hasPeople = peopleInRoom.length > 0;
-    if (hasPeople || isYoungChild) {
+    {
       // Build "recently talked to" context from conversation summary
       const recentConvCount = personaState?.conversations?.length || 0;
       const recentConvWarning = recentConvCount > 3
@@ -414,13 +447,15 @@ VARIETY: Don't start every sentence with "Hey [name]". Real people vary their op
 No JSON — just your social reasoning and what you might say.`,
         userPrompt: `I've decided to: ${stage2.response}
 
+FOCUS: Stay in THIS room, THIS moment. Do NOT narrate yourself in other rooms or describe future scenes. Only reason about what to say RIGHT NOW.
+
 MY CURRENT ACTIVITY: ${member.activityLabel || 'idle'}${member.interactionTimer && member.interactionDuration ? ` (${Math.round((member.interactionTimer / member.interactionDuration) * 100)}% done)` : ''}
 What I'm doing shapes what I'd naturally say. If I'm cooking, I'd mention food or timing.
 If I'm reading, I'd reference the book. If I'm working on something, I'd comment on it.
 My words should FLOW FROM my activity — not appear from nowhere.
 
 ${hasPeople ? `People in the room with me:
-${peopleInRoom.map(p => `- ${p.name} (${p.activity || p.state})${p.destination ? ` heading to ${p.destination}` : ''}`).join('\n')}` : `I'm alone right now.${isYoungChild ? `\nBut I'm a little kid — I talk to myself, narrate what I'm doing, call out to Mommy or Daddy, make sound effects, sing, or just think out loud. Kids my age don't stay silent when they're playing alone!` : ''}`}
+${peopleInRoom.map(p => `- ${p.name} (${p.activity || p.state})${p.destination ? ` heading to ${p.destination}` : ''}`).join('\n')}` : `I'm alone right now.${isYoungChild ? `\nBut I'm a little kid — I talk to myself, narrate what I'm doing, call out to Mommy or Daddy, make sound effects, sing, or just think out loud. Kids my age don't stay silent when they're playing alone!` : `\nPeople think out loud sometimes. I might mutter about what I'm doing, sigh, hum, or have a thought worth noting.\nIf I have an inner thought, prefix it with *thought* — e.g., "*thought* I should check on the kids later."\nSelf-talk is natural: commenting on a task, reacting to something, planning aloud.\nBut silence is also perfectly fine. Not every moment needs narration.`}`}
 
 ${perception.environment.sleepingMembers.length > 0 ? `⚠ Sleeping: ${perception.environment.sleepingMembers.join(', ')} — be quiet!` : ''}
 
@@ -440,8 +475,9 @@ Consider:
 - A parenting moment — check-in, reminder, encouragement, instruction
 - Just a warm greeting if we haven't talked in a while
 Only stay silent if I'm deeply focused AND the other person seems busy too.` : `Even though I'm alone, would I talk to myself? Call out for someone? Make a comment about what I'm doing? Narrate my play? Sing?
+Adults: mutter about what you're doing, react to something, or have an inner thought (prefix with *thought*).
 If so, set speechTarget to "room" or "everyone" — it's just me thinking out loud.
-If I genuinely have nothing to say, that's fine too.`}`,
+If I genuinely have nothing to say, that's fine — most moments solo are quiet.`}`,
         options: { temperature: 0.6, max_tokens: 200, top_p: 0.9 },
       });
       stages.push(stage3);
@@ -487,7 +523,12 @@ ${interactionList}
 If your reasoning leads to something a real person would do but it's NOT on the list, you can invent an action:
 Set "action" to: createAction("short description of what you're doing")
 Examples: createAction("Make shadow puppets on the wall"), createAction("Stack couch cushions into a fort"), createAction("Teach Jack to tie his shoes")
-Use this ONLY when no listed action fits your intent. Prefer listed actions when one matches.
+createAction is PREFERRED for SPECIFIC, PERSONALITY-DRIVEN actions that no generic option captures authentically:
+- Jack making WHOOSH/BOOM sound effects while playing → createAction("Make superhero sound effects")
+- Mom wiping the counter a third time because she can't help it → createAction("Wipe down counter obsessively")
+- Emma sketching a specific character from her manga → createAction("Draw Zephyr fighting the shadow dragon")
+- Lily making up a song about her stuffed animals → createAction("Sing a made-up song to her stuffed animals")
+Use a listed action for generic activities (sleeping, eating, watching TV). For everything personality-specific, createAction is MORE authentic.
 ${recentActionsList.length > 0 ? `\n⚠ AVOID these recent actions: ${[...new Set(recentActionsList.slice(-5))].join(', ')}` : ''}
 ${personaState?.lastDecision?.interactionId ? `\n🚫 LAST ACTION was "${personaState.lastDecision.interactionId}" — you MUST pick something different!` : ''}
 
@@ -540,6 +581,32 @@ Output ONLY this JSON:
         finalDecision.lightAction = null;
       }
 
+      // Post-process: enforce no speech/speechTarget on navigation actions
+      // A character who's walking to another room can't have a meaningful conversation
+      // as they leave. The prompt says this, but LLMs often ignore it — enforce in code.
+      if (finalDecision.action && finalDecision.action.startsWith('go_to_')) {
+        finalDecision.speech = null;
+        finalDecision.speechTarget = null;
+        finalDecision.lightAction = null; // Can't toggle lights while leaving
+      }
+
+      // Post-process: validate speechTarget is a known character name in the room
+      // Reject pet names like "Mommy", "Daddy", "Mama", "Bro", etc.
+      if (finalDecision.speechTarget) {
+        const validTargets = new Set(peopleInRoom.map(p => p.name));
+        // Map informal terms to canonical names
+        const informalMap = { 'Mommy': 'Mom', 'Mama': 'Mom', 'Daddy': 'Dad', 'Father': 'Dad', 'Mother': 'Mom' };
+        if (informalMap[finalDecision.speechTarget]) {
+          const canonical = informalMap[finalDecision.speechTarget];
+          finalDecision.speechTarget = validTargets.has(canonical) ? canonical : null;
+          if (!finalDecision.speechTarget) finalDecision.speech = null;
+        } else if (!validTargets.has(finalDecision.speechTarget)) {
+          // Target not in room — clear speech
+          finalDecision.speech = null;
+          finalDecision.speechTarget = null;
+        }
+      }
+
       // Post-process: strip self-addressing from speech
       // e.g. "David, could you..." when David IS the speaker
       if (finalDecision.speech && typeof finalDecision.speech === 'string') {
@@ -552,8 +619,14 @@ Output ONLY this JSON:
 
         // Post-process: strip inner-monologue patterns from speech
         // e.g. "I think I'll talk to Lily about my feelings." — that's thinking, not talking
+        // Post-process: strip literal placeholder strings (LLM bug: outputs "speech" as the value)
+        if (/^(speech|null|none|SPEECH|NULL|undefined|N\/A)$/i.test(finalDecision.speech.trim())) {
+          finalDecision.speech = null;
+          finalDecision.speechTarget = null;
+        }
+
         const innerMonologueRe = /^(I think I'?ll |I'm going to |Maybe I'?ll |I'?ll probably |I should |I want to )/i;
-        if (innerMonologueRe.test(finalDecision.speech)) {
+        if (finalDecision.speech && innerMonologueRe.test(finalDecision.speech)) {
           finalDecision.speech = null; // This is internal monologue, not spoken dialogue
         }
 
@@ -612,6 +685,96 @@ Output ONLY this JSON:
       }
     }
 
+    // ──────────────────────────────────────────────────────
+    // STAGE 5: POST-DECISION REFLECTION  (Reflector — LLM call)
+    //   (goals.md: Reflector catches emotional contradictions, adds "second thoughts")
+    //   LLM-powered: reviews the Validator's decision through the character's
+    //   emotional lens and can flag contradictions, add second thoughts,
+    //   or note procrastination / avoidance patterns.
+    // ──────────────────────────────────────────────────────
+    if (finalDecision) {
+      // Build context about the chosen action
+      const chosenInteraction = availableInteractions.find(i => i.id === finalDecision.action);
+      const criticalNeedsList = criticalNeeds.map(n => `${n.key}: ${Math.round(n.value)}%`).join(', ');
+      const unresolved = personaState._unresolvedTopics || [];
+      const unresolvedStr = unresolved.length > 0
+        ? unresolved.slice(0, 3).map(t => `${t.with}: ${t.topic}`).join('; ')
+        : 'none';
+
+      const reflectorStage = await this._runStage({
+        name: 'Reflector',
+        agent: 'Reflector',
+        icon: '🪞',
+        systemPrompt: `You are the inner doubt / second-thought voice of ${persona.fullName} (${persona.age}, ${persona.role}).
+Your job: review the decision just made and flag anything that feels OFF.
+You catch emotional contradictions, procrastination, avoidance, and inauthenticity.
+You are NOT an optimizer — you're the gut-check. "Wait, am I really going to do that right now?"
+
+Think like a real person's moment of hesitation AFTER deciding.`,
+        userPrompt: `DECISION JUST MADE:
+Action: ${finalDecision.action} (${chosenInteraction?.label || 'unknown'}, category: ${chosenInteraction?.category || '?'})
+Thought: "${finalDecision.thought}"
+Speech: ${finalDecision.speech ? `"${finalDecision.speech}" → ${finalDecision.speechTarget}` : 'silent'}
+Emotion: ${finalDecision.emotion}
+
+CONTEXT:
+Current mood: ${personaState.mood} (stress: ${Math.round(personaState.stressLevel * 100)}%)
+Critical needs: ${criticalNeedsList || 'none'}
+Unresolved conversations: ${unresolvedStr}
+People in room: ${peopleInRoom.map(p => p.name).join(', ') || 'alone'}
+${emotionalCascade ? emotionalCascade : ''}
+
+Does this decision feel authentic? Any red flags?
+Respond with ONLY JSON:
+{
+  "flags": ["flag_name", ...],
+  "secondThought": "brief inner doubt or none",
+  "override": false
+}
+
+Possible flags (use 0-3):
+- "procrastinating_critical_need" — choosing fun/leisure when hunger/bladder/energy is critical
+- "exercising_while_exhausted" — working out with no energy
+- "leaving_unresolved_conversation" — fleeing a room where an unfinished conversation partner is present
+- "socializing_while_angry" — engaging socially in a bad emotional state
+- "emotional_mismatch" — the emotion tag doesn't match the action or speech
+- "ignoring_present_company" — someone is here but character is doing a solo activity without acknowledging them
+- "repetitive_pattern" — this feels like the same thing they always do
+Set override to true ONLY if the decision is so contradictory it should be reconsidered (very rare).`,
+        options: { temperature: 0.85, max_tokens: 200 },
+      });
+      stages.push(reflectorStage);
+
+      // Parse reflector response
+      const reflectionNotes = [];
+      if (reflectorStage.response) {
+        try {
+          let jsonStr = reflectorStage.response.trim();
+          const fb = jsonStr.indexOf('{');
+          const lb = jsonStr.lastIndexOf('}');
+          if (fb >= 0 && lb > fb) jsonStr = jsonStr.substring(fb, lb + 1);
+          const parsed = JSON.parse(jsonStr);
+
+          if (Array.isArray(parsed.flags)) {
+            reflectionNotes.push(...parsed.flags.filter(f => typeof f === 'string'));
+          }
+          if (parsed.secondThought && parsed.secondThought !== 'none' && parsed.secondThought.length > 3) {
+            finalDecision._secondThought = String(parsed.secondThought).substring(0, 200);
+          }
+          if (parsed.override === true) {
+            finalDecision._reflectionOverride = true;
+          }
+        } catch (_) {
+          // If parse fails, leave reflectionNotes empty — non-critical
+        }
+      }
+
+      // Attach reflection notes — AgenticEngine can use these for logging/adjustment
+      if (reflectionNotes.length > 0) {
+        finalDecision._reflectionNotes = reflectionNotes;
+      }
+    }
+
     return this._buildResult(stages, finalDecision, pipelineStart, 'full', pipelineId);
   }
 
@@ -622,7 +785,7 @@ Output ONLY this JSON:
   async _conversationPipeline(member, persona, perception, availableInteractions, personaState, conversationContext, gameTime, stages, pipelineId) {
     const pipelineStart = Date.now();
     const peopleInRoom = perception.visible.peopleInRoom;
-    const memoryNarrative = narrateMemories(personaState, 5);
+    const memoryNarrative = narrateMemories(personaState, 5, personaState.mood);
     const moodNarrative = narrateMood(member.name, personaState.mood, personaState.moodIntensity, personaState.stressLevel, member.needs);
 
     // ── Inner state for richer conversation context ──
@@ -701,7 +864,7 @@ How does this make me feel? What do I want to say back?
 Keep my reply short and natural — like a real person, not a speech.
 My reply should ADVANCE the conversation — react to their words, answer their question, or bring up something new.
 Think as ${persona.name} — authentic, real.`,
-      options: { temperature: 0.9, max_tokens: 150, top_p: 0.9 },
+      options: { temperature: Math.min(0.6 + turnNumber * 0.04, 0.72), max_tokens: 180, top_p: 0.92 },
     });
     stages.push(stage1);
 
@@ -827,13 +990,13 @@ Output ONLY this JSON:
    *
    * @returns {{ stages, result, totalElapsed, totalTokens, pipelineType, pipelineId }}
    */
-  async backgroundThink(member, allMembers, gameTime, roomLights, personaState, recentEvents, agenda) {
+  async backgroundThink(member, allMembers, gameTime, roomLights, personaState, recentEvents, agenda, worldState, weatherSystem) {
     const pipelineId = `bg_${++this.pipelineCount}`;
     const stages = [];
     const pipelineStart = Date.now();
 
     const persona = getPersona(member.name);
-    const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents);
+    const perception = buildPerception(member, allMembers, gameTime, roomLights, recentEvents, worldState, weatherSystem);
     const peopleInRoom = perception.visible.peopleInRoom;
     const conversations = buildConversationSummary(personaState);
 
@@ -848,7 +1011,7 @@ Output ONLY this JSON:
     // ── STAGE 1: Inner Monologue ──
     const bgNeedsNarrative = narrateNeeds(member.name, member.needs, perception.environment.hour);
     const bgMoodNarrative = narrateMood(member.name, personaState.mood, personaState.moodIntensity, personaState.stressLevel, member.needs);
-    const bgMemoryNarrative = narrateMemories(personaState, 5);
+    const bgMemoryNarrative = narrateMemories(personaState, 5, personaState.mood);
     const bgLongTermPatterns = getLongTermPatterns(personaState);
     const bgDailySummary = getDailySummaryNarrative(personaState);
 
@@ -1129,17 +1292,18 @@ A hug from Mommy can fix everything. You ask "why?" because you genuinely want t
       }
 
       if (isCreatedAction) {
-        // Created action — classify and return as special result
-        const { classifyCreatedAction } = require('./ActionClassifier');
+        // Created action — classify and enrich with character context
+        const { classifyCreatedAction, enrichCreatedAction } = require('./ActionClassifier');
         const classified = classifyCreatedAction(actionDescription);
+        const enriched = enrichCreatedAction(classified, member.name, member.skills);
 
         return {
           thought: String(parsed.thought || 'No reasoning provided.'),
-          action: classified.id,
+          action: enriched.id,
           plan: null, // created actions don't support multi-step plans
           isCreatedAction: true,
           actionDescription,
-          createdActionData: classified,
+          createdActionData: enriched,
           details: parsed.details ? String(parsed.details).substring(0, 300) : null,
           speech: parsed.speech && parsed.speech !== 'null' && parsed.speech !== 'None'
             ? String(parsed.speech).substring(0, 200) : null,

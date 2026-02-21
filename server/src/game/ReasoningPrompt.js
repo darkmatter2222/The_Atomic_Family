@@ -104,7 +104,7 @@ function buildUserPrompt(member, allMembers, gameTime, roomLights, personaState,
   const percNarrative = narratePerception(perception, member.name);
   const needsNarrative = narrateNeeds(member.name, member.needs, perception.environment.hour);
   const moodNarrative = narrateMood(member.name, personaState.mood, personaState.stressLevel);
-  const memoryNarrative = narrateMemories(personaState, 8);
+  const memoryNarrative = narrateMemories(personaState, 8, personaState.mood);
   const skillsNarrative = narrateSkills(member.name, personaState.skills || {});
 
   // ── Build family location awareness (who's where in the house) ──
@@ -228,6 +228,8 @@ ${dailySummary}
 
 ## Recent Conversations
 ${conversations}
+${_buildUnresolvedTopics(personaState)}
+${_buildAttentionHint(personaState, member)}
 ${recentActionsStr}
 ${darkRoomWarning}
 
@@ -741,7 +743,19 @@ function buildAgendaSection(agenda, gameTime) {
   }).join('\n');
 
   const completed = agenda.plan.filter(i => i.done).length;
-  return `## My Plan for Today (${completed}/${agenda.plan.length} done)\n${items}`;
+
+  // Rich agenda metadata (mustDo, wantToDo, obstacles)
+  const mustDoStr = agenda.mustDo && agenda.mustDo.length > 0
+    ? `\nMust do: ${agenda.mustDo.join(', ')}`
+    : '';
+  const wantToDoStr = agenda.wantToDo && agenda.wantToDo.length > 0
+    ? `\nWant to do: ${agenda.wantToDo.join(', ')}`
+    : '';
+  const obstaclesStr = agenda.anticipatedObstacles && agenda.anticipatedObstacles.length > 0
+    ? `\nWatch out for: ${agenda.anticipatedObstacles.join(', ')}`
+    : '';
+
+  return `## My Plan for Today (${completed}/${agenda.plan.length} done)${mustDoStr}${wantToDoStr}${obstaclesStr}\n${items}`;
 }
 
 function parseTimeToHour(timeStr) {
@@ -929,11 +943,15 @@ function buildAgendaPrompt(member, gameTime, personaState) {
   // Expected number of items based on time remaining
   const expectedItems = Math.max(2, Math.min(8, Math.ceil(hoursLeft / 1.5)));
 
+  // Day-specific flavor (goals.md: day-of-week affects agenda)
+  const dayNumber = gameTime.getDay(); // 0=Sun, 6=Sat
+  const dayFlavor = _getDayOfWeekFlavor(member.name, dayNumber, isWeekend);
+
   return `${greeting} It's ${timeStr} on ${dayStr}. ${isWeekend ? 'It\'s the weekend!' : 'It\'s a weekday.'}
 
 As ${persona.fullName} (${persona.age} years old, ${persona.role}), plan the REST of your day starting from NOW (${timeStr}).
 ${hoursLeftStr}
-Think about:
+${dayFlavor ? `TODAY'S VIBE: ${dayFlavor}\n` : ''}Think about:
 - Your personality: ${persona.traits.slice(0, 4).join(', ')}
 - Your likes: ${persona.likes.slice(0, 5).join(', ')}
 - Your responsibilities
@@ -948,10 +966,17 @@ Stress level: ${Math.round(personaState.stressLevel * 100)}%
 IMPORTANT: Start your plan from the CURRENT time (${timeStr}), NOT from the morning.
 Only plan activities that make sense for this time of day.
 
-Respond with ONLY a JSON array of planned activities (no other text):
-[{"time":"${gameTime.getHours()}:${String(gameTime.getMinutes()).padStart(2, '0')}","activity":"short description","duration":30}]
+Respond with ONLY this JSON (no other text):
+{
+  "mustDo": ["things you HAVE to do today — meals, chores, responsibilities"],
+  "wantToDo": ["things you'd LIKE to do — hobbies, social, fun"],
+  "anticipatedObstacles": ["things that might get in the way — moods, other people, weather"],
+  "plan": [{"time":"${gameTime.getHours()}:${String(gameTime.getMinutes()).padStart(2, '0')}","activity":"short description","duration":30}]
+}
 
-Make ${expectedItems} activities from now until bedtime.
+Make ${expectedItems} plan activities from now until bedtime.
+mustDo and wantToDo: 2-4 items each, short phrases.
+anticipatedObstacles: 1-2 items (what could derail your day).
 Use 24-hour format for times (e.g., "14:30" not "2:30 PM"). Hours must be 0-23, minutes 0-59.
 Keep activity descriptions SHORT (under 30 characters). No markdown, no explanation.`;
 }
@@ -966,13 +991,32 @@ function parseAgenda(rawResponse) {
   try {
     let jsonStr = rawResponse.trim();
 
-    // Find array brackets
+    // Try to parse as a rich agenda object first (new format: { mustDo, wantToDo, anticipatedObstacles, plan })
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const objStr = jsonStr.substring(firstBrace, lastBrace + 1);
+      try {
+        const richParsed = JSON.parse(objStr);
+        if (richParsed.plan && Array.isArray(richParsed.plan)) {
+          // Rich format detected — extract plan array and attach metadata
+          const plan = _sanitizeAgendaPlan(richParsed.plan);
+          if (plan) {
+            plan._mustDo = Array.isArray(richParsed.mustDo) ? richParsed.mustDo.map(s => String(s).substring(0, 100)) : [];
+            plan._wantToDo = Array.isArray(richParsed.wantToDo) ? richParsed.wantToDo.map(s => String(s).substring(0, 100)) : [];
+            plan._anticipatedObstacles = Array.isArray(richParsed.anticipatedObstacles) ? richParsed.anticipatedObstacles.map(s => String(s).substring(0, 100)) : [];
+            return plan;
+          }
+        }
+      } catch (_) { /* fall through to legacy array parsing */ }
+    }
+
+    // Legacy format: bare JSON array
     const firstBracket = jsonStr.indexOf('[');
     let lastBracket = jsonStr.lastIndexOf(']');
 
     // If no closing bracket, try to repair truncated JSON
     if (firstBracket >= 0 && lastBracket <= firstBracket) {
-      // Truncated — find the last complete object (ending with })
       let truncated = jsonStr.substring(firstBracket);
       const lastCloseBrace = truncated.lastIndexOf('}');
       if (lastCloseBrace > 0) {
@@ -991,35 +1035,45 @@ function parseAgenda(rawResponse) {
     const parsed = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) return null;
 
-    return parsed
-      .filter(item => item.time && item.activity)
-      .map(item => {
-        // Sanitize time — fix invalid formats like "8:60", "12:60"
-        let timeStr = String(item.time);
-        const timeParts = timeStr.split(':');
-        if (timeParts.length === 2) {
-          let h = parseInt(timeParts[0]) || 0;
-          let m = parseInt(timeParts[1]) || 0;
-          // Fix invalid minutes (8:60 → 9:00)
-          if (m >= 60) { h += Math.floor(m / 60); m = m % 60; }
-          // Clamp hours
-          h = Math.max(0, Math.min(23, h));
-          m = Math.max(0, Math.min(59, m));
-          timeStr = `${h}:${String(m).padStart(2, '0')}`;
-        }
-        return {
-          time: timeStr,
-          activity: String(item.activity).substring(0, 100),
-          duration: Math.min(parseInt(item.duration) || 30, 120), // Cap at 2 hours
-          done: false,
-          completedAt: null,
-        };
-      })
-      .slice(0, 8); // Cap to 8 items max
+    return _sanitizeAgendaPlan(parsed);
   } catch (err) {
     console.error(`[ReasoningPrompt] Failed to parse agenda: ${err.message}`);
     return null;
   }
+}
+
+/**
+ * Sanitize and validate an agenda plan array.
+ * Fixes invalid times, caps items, validates structure.
+ */
+function _sanitizeAgendaPlan(planArray) {
+  if (!Array.isArray(planArray)) return null;
+
+  const result = planArray
+    .filter(item => item.time && item.activity)
+    .map(item => {
+      // Sanitize time — fix invalid formats like "8:60", "12:60"
+      let timeStr = String(item.time);
+      const timeParts = timeStr.split(':');
+      if (timeParts.length === 2) {
+        let h = parseInt(timeParts[0]) || 0;
+        let m = parseInt(timeParts[1]) || 0;
+        if (m >= 60) { h += Math.floor(m / 60); m = m % 60; }
+        h = Math.max(0, Math.min(23, h));
+        m = Math.max(0, Math.min(59, m));
+        timeStr = `${h}:${String(m).padStart(2, '0')}`;
+      }
+      return {
+        time: timeStr,
+        activity: String(item.activity).substring(0, 100),
+        duration: Math.min(parseInt(item.duration) || 30, 120),
+        done: false,
+        completedAt: null,
+      };
+    })
+    .slice(0, 8);
+
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -1062,6 +1116,92 @@ function buildFamilyLocationAwareness(member, allMembers) {
 
   if (lines.length === 0) return 'Everyone else is in this room with you.';
   return lines.join('\n');
+}
+
+/**
+ * Build unresolved conversation topics section for the prompt.
+ * Per goals.md: conversations shouldn't feel standalone — topics carry forward.
+ */
+function _buildUnresolvedTopics(personaState) {
+  const topics = personaState._unresolvedTopics;
+  if (!topics || topics.length === 0) return '';
+
+  const topicLines = topics.slice(0, 5).map(t =>
+    `- ${t.with}: ${t.topic}${t.type === 'interrupted' ? ' (was interrupted)' : ''}`
+  );
+  return `\n## Unresolved Conversations\nThings that were mentioned but never resolved:\n${topicLines.join('\n')}`;
+}
+
+/**
+ * Build attention deficit hint for children.
+ * Per goals.md: the kid who gets least attention is most likely to act out.
+ */
+function _buildAttentionHint(personaState, member) {
+  if (!personaState._attentionDeficit) return '';
+
+  const att = personaState._parentalAttention;
+  if (!att) return '';
+
+  const total = att.fromDad + att.fromMom;
+  if (total > 3) return ''; // They've gotten some attention, deficit isn't extreme
+
+  const hints = {
+    Emma: 'Nobody has really talked to you much today. Typical. It\'s fine. (It\'s not fine.)',
+    Lily: 'You haven\'t gotten much attention from Mommy or Daddy today. That makes you feel a little sad.',
+    Jack: 'Nobody\'s paying attention to you! Maybe if you DO something they\'ll HAVE to look!',
+  };
+  return hints[member.name] ? `\n⚠️ ${hints[member.name]}` : '';
+}
+
+/**
+ * Get day-of-week specific flavor text for agenda building.
+ * Per goals.md: days should feel different. Monday ≠ Friday ≠ Sunday.
+ *
+ * @param {string} name - Character name
+ * @param {number} dayNumber - 0=Sun through 6=Sat
+ * @param {boolean} isWeekend
+ * @returns {string|null} Day-flavor text or null
+ */
+function _getDayOfWeekFlavor(name, dayNumber, isWeekend) {
+  const dayFlavors = {
+    0: { // Sunday
+      Dad: 'Lazy Sunday. Maybe the grill? Or just football and doing nothing.',
+      Mom: 'Sunday — a slower pace. Church? Meal prep for the week? Just... breathe.',
+      Emma: 'Sunday. Tomorrow is Monday. Ugh. Enjoy the freedom while it lasts.',
+      Lily: 'Sunday funday! No school tomorrow... wait, yes there is.',
+      Jack: 'SUNDAY! Last day before school! DO ALL THE THINGS!',
+    },
+    1: { // Monday
+      Dad: 'Monday. The week starts fresh. Get organized, knock out the big stuff.',
+      Mom: 'Monday madness. School runs, packed lunches, getting everyone back on track.',
+      Emma: 'Monday. The worst day. Everything feels like a chore.',
+      Lily: 'Monday... school was long. Home feels nice.',
+      Jack: 'Monday is OVER. Play time!',
+    },
+    3: { // Wednesday
+      Dad: 'Hump day. Halfway through the week.',
+      Mom: 'Wednesday — the week is half over but the to-do list hasn\'t shrunk.',
+      Emma: 'Wednesday. Still 2 more days until the weekend. Counting down.',
+    },
+    5: { // Friday
+      Dad: 'Friday! Weekend vibes starting. Maybe order pizza tonight?',
+      Mom: 'Friday — the light at the end of the tunnel. Family movie night?',
+      Emma: 'Friday. FINALLY. Weekend plans forming in your head.',
+      Lily: 'Friday! Almost the weekend! Can we do something FUN?',
+      Jack: 'FRIDAY FRIDAY FRIDAY! NO SCHOOL TOMORROW!',
+    },
+    6: { // Saturday
+      Dad: 'Saturday. Sleep in, projects, maybe something fun with the family.',
+      Mom: 'Saturday — errands, but also maybe actually relax for once?',
+      Emma: 'Saturday. YOUR day. No obligations. Well, maybe some chores. But mostly YOUR day.',
+      Lily: 'SATURDAY! No school! Art all day!',
+      Jack: 'SATURDAY!!! OUTSIDE ALL DAY!!!',
+    },
+  };
+
+  const dayObj = dayFlavors[dayNumber];
+  if (!dayObj) return null;
+  return dayObj[name] || null;
 }
 
 module.exports = {

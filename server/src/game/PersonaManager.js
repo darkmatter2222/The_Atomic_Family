@@ -126,6 +126,10 @@ function createPersonaState(name) {
     relationshipNarratives: {},    // Tier 3: { targetName: "narrative string" } per-relationship
     emotionalCascadeBuffer: [],    // Rolling buffer of recent emotional shifts: [{ shift, emotion, reason, gameHour }]
     obedience: persona.authority < 0.5 ? 0.5 : 0.8, // how likely to follow commands (kids lower)
+    // ── Consequence / promise tracking (goals.md) ──
+    consequences: [],       // [{ type, description, issuedBy, timestamp, expiresAt }]
+    promises: [],           // [{ to, description, timestamp, fulfilled, broken }]
+    contagiousMood: null,   // { emotion, source, intensity, timestamp } — picked up from nearby characters
   };
 }
 
@@ -420,6 +424,54 @@ function buildConversationSummary(personaState, maxEntries = 8) {
 }
 
 /**
+ * Build a full "conversation history today" summary for the Deliberator prompt.
+ * Groups conversations by partner and summarizes each exchange with key topics/tone.
+ * This prevents characters from being amnesiac between conversations — they remember
+ * what happened at breakfast when talking at dinner (goals.md: conversation memory).
+ *
+ * @param {Object} personaState - The character's persona state
+ * @param {string} myName - The name of the character (to identify their own messages)
+ * @returns {string} Formatted conversation history for injection into LLM prompt
+ */
+function buildConversationHistoryToday(personaState, myName) {
+  const convs = personaState.conversations || [];
+  if (convs.length === 0) return '';
+
+  // Group messages by conversation partner (not self, not 'everyone'/'room')
+  const partnerMap = {}; // partnerName → [messages]
+  for (const c of convs) {
+    const partner = c.speaker === myName ? c.target : c.speaker;
+    if (!partner || partner === myName || partner === 'everyone' || partner === 'room') continue;
+    if (!partnerMap[partner]) partnerMap[partner] = [];
+    partnerMap[partner].push(c);
+  }
+
+  if (Object.keys(partnerMap).length === 0) return '';
+
+  // Build a compact summary per partner
+  const lines = [];
+  for (const [partner, msgs] of Object.entries(partnerMap)) {
+    if (msgs.length === 0) continue;
+    const count = msgs.length;
+    const lastMsg = msgs[msgs.length - 1];
+    const ago = Math.round((Date.now() - lastMsg.timestamp) / 60000);
+    const timeLabel = ago < 1 ? 'just now' : ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`;
+
+    // Extract emotion tone from last few messages
+    const recentEmotions = msgs.slice(-3).map(m => m.emotion).filter(Boolean);
+    const toneStr = recentEmotions.length > 0 ? ` [tone: ${[...new Set(recentEmotions)].join('/')}]` : '';
+
+    // Summarize the key content: pick most recent substantive messages
+    const substantive = msgs.filter(m => m.text && m.text.length > 10).slice(-3);
+    const snippets = substantive.map(m => `"${m.text.substring(0, 60)}${m.text.length > 60 ? '...' : ''}"`).join(', ');
+
+    lines.push(`- With ${partner} (${count} exchanges, last ${timeLabel})${toneStr}: ${snippets || '(brief exchange)'}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : '';
+}
+
+/**
  * Build a "today so far" summary from the dailyLog.
  * Groups activities and shows frequency with sequential numbering.
  * Uses relative ordering rather than real-time timestamps
@@ -570,6 +622,138 @@ function serializePersonaState(personaState) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  CONSEQUENCE & PROMISE TRACKING (goals.md)
+// ═══════════════════════════════════════════════════════════════
+
+const MAX_CONSEQUENCES = 10;
+const MAX_PROMISES = 15;
+
+/**
+ * Record a consequence (grounding, time-out, privilege removal, etc.)
+ * issued by one character to another.
+ *
+ * @param {object} personaState - The character receiving the consequence
+ * @param {string} type - 'grounding'|'timeout'|'privilege_revoked'|'warning'|'extra_chore'
+ * @param {string} description - What the consequence is
+ * @param {string} issuedBy - Who imposed it
+ * @param {number} durationMinutes - How long (game minutes) it lasts; 0 = indefinite
+ */
+function recordConsequence(personaState, type, description, issuedBy, durationMinutes = 60) {
+  if (!personaState.consequences) personaState.consequences = [];
+  personaState.consequences.push({
+    type,
+    description,
+    issuedBy,
+    timestamp: Date.now(),
+    expiresAt: durationMinutes > 0 ? Date.now() + durationMinutes * 60000 : null,
+  });
+  if (personaState.consequences.length > MAX_CONSEQUENCES) {
+    personaState.consequences.shift();
+  }
+}
+
+/**
+ * Get active (non-expired) consequences for prompt injection.
+ */
+function getActiveConsequences(personaState) {
+  if (!personaState.consequences) return [];
+  const now = Date.now();
+  personaState.consequences = personaState.consequences.filter(c =>
+    !c.expiresAt || c.expiresAt > now
+  );
+  return personaState.consequences;
+}
+
+/**
+ * Record a promise made by this character to another.
+ */
+function recordPromise(personaState, to, description) {
+  if (!personaState.promises) personaState.promises = [];
+  personaState.promises.push({
+    to,
+    description,
+    timestamp: Date.now(),
+    fulfilled: false,
+    broken: false,
+  });
+  if (personaState.promises.length > MAX_PROMISES) {
+    personaState.promises.shift();
+  }
+}
+
+/**
+ * Get unfulfilled promises for prompt injection.
+ */
+function getUnfulfilledPromises(personaState) {
+  if (!personaState.promises) return [];
+  return personaState.promises.filter(p => !p.fulfilled && !p.broken);
+}
+
+/**
+ * Mark a promise as fulfilled or broken.
+ */
+function resolvePromise(personaState, promiseIndex, fulfilled) {
+  if (!personaState.promises || !personaState.promises[promiseIndex]) return;
+  if (fulfilled) {
+    personaState.promises[promiseIndex].fulfilled = true;
+  } else {
+    personaState.promises[promiseIndex].broken = true;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONTAGIOUS MOOD (goals.md)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Apply mood contagion when characters share a room.
+ * Strong emotions spread — Mom's stress makes everyone tense;
+ * Jack's glee lifts the room.
+ *
+ * @param {object} personaState - Character to potentially infect
+ * @param {Array} nearbyPersonaStates - Persona states of characters in the same room
+ * @param {number} deltaSeconds - Time step
+ */
+function applyMoodContagion(personaState, nearbyPersonaStates, deltaSeconds) {
+  if (!nearbyPersonaStates || nearbyPersonaStates.length === 0) return;
+
+  const persona = PERSONA_MAP[personaState.name];
+  if (!persona) return;
+
+  // Susceptibility: agreeable & neurotic characters more susceptible
+  const agreeableness = persona.personality?.agreeableness || 0.5;
+  const neuroticism = persona.personality?.neuroticism || 0.5;
+  const susceptibility = (agreeableness * 0.6 + neuroticism * 0.4);
+
+  // Kids are more susceptible to mood contagion
+  const ageMod = (persona.age || 30) < 10 ? 1.5 : (persona.age || 30) < 18 ? 1.2 : 1.0;
+
+  for (const other of nearbyPersonaStates) {
+    if (other.name === personaState.name) continue;
+    if (!other.moodIntensity || other.moodIntensity < 0.5) continue;
+
+    // Only intense moods spread
+    const spreadStrength = other.moodIntensity * susceptibility * ageMod * 0.01 * deltaSeconds;
+    if (spreadStrength < 0.01) continue;
+
+    // Parents' moods weigh heavier on kids (and vice versa for extreme kid emotions)
+    const isParent = other.name === 'Dad' || other.name === 'Mom';
+    const isChild = personaState.name === 'Jack' || personaState.name === 'Lily';
+    const familyMod = (isParent && isChild) ? 1.5 : 1.0;
+
+    const effectiveStrength = spreadStrength * familyMod;
+    if (effectiveStrength > 0.02) {
+      personaState.contagiousMood = {
+        emotion: other.mood,
+        source: other.name,
+        intensity: Math.min(0.5, effectiveStrength),
+        timestamp: Date.now(),
+      };
+    }
+  }
+}
+
 module.exports = {
   getPersona,
   getAllPersonaNames,
@@ -584,11 +768,18 @@ module.exports = {
   getCurrentScheduleEntry,
   buildMemorySummary,
   buildConversationSummary,
+  buildConversationHistoryToday,
   buildDailySummary,
   resetDailyLog,
   getNickname,
   summarizeEmotionalCascade,
   serializePersonaState,
+  recordConsequence,
+  getActiveConsequences,
+  recordPromise,
+  getUnfulfilledPromises,
+  resolvePromise,
+  applyMoodContagion,
   FAMILY_DATA,
   SOCIAL_DYNAMICS,
   ENVIRONMENT_RULES,

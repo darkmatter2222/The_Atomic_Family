@@ -446,14 +446,23 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         const progress = Math.min(updated.interactionTimer / updated.interactionDuration, 1);
         const newFraction = progress - (updated.effectsApplied || 0);
         if (newFraction > 0) {
+          const interaction = updated.currentInteraction;
+          const needsOptions = {
+            currentCategory: interaction.category,
+            recentCategories: (updated._recentFunCategories || []),
+            mealQuality: interaction._mealQuality || null,
+            isDrink: interaction.category === 'hydration' || (interaction.id && interaction.id.includes('drink')),
+            isCoffee: interaction.id && (interaction.id.includes('coffee') || interaction.id.includes('espresso')),
+          };
           updated.needs = applyNeedsEffects(
             updated.needs,
-            updated.currentInteraction.needsEffects,
-            newFraction
+            interaction.needsEffects,
+            newFraction,
+            needsOptions
           );
           updated.skills = applySkillEffects(
             updated.skills,
-            updated.currentInteraction.skillEffects,
+            interaction.skillEffects,
             newFraction
           );
           updated.effectsApplied = progress;
@@ -464,17 +473,37 @@ export function updateFamilyMember(member, deltaTime, gameHour = 12) {
         // Apply any remaining fraction of effects (rounding safety)
         if (updated.currentInteraction && (updated.effectsApplied || 0) < 1) {
           const remaining = 1 - (updated.effectsApplied || 0);
+          const interaction = updated.currentInteraction;
+          const needsOptions = {
+            currentCategory: interaction.category,
+            recentCategories: (updated._recentFunCategories || []),
+            mealQuality: interaction._mealQuality || null,
+            isDrink: interaction.category === 'hydration' || (interaction.id && interaction.id.includes('drink')),
+            isCoffee: interaction.id && (interaction.id.includes('coffee') || interaction.id.includes('espresso')),
+          };
           updated.needs = applyNeedsEffects(
             updated.needs,
-            updated.currentInteraction.needsEffects,
-            remaining
+            interaction.needsEffects,
+            remaining,
+            needsOptions
           );
           updated.skills = applySkillEffects(
             updated.skills,
-            updated.currentInteraction.skillEffects,
+            interaction.skillEffects,
             remaining
           );
         }
+        const finishedInteraction = updated.currentInteraction;
+
+        // Track recent fun categories for diminishing returns
+        if (finishedInteraction && finishedInteraction.category) {
+          if (!updated._recentFunCategories) updated._recentFunCategories = [];
+          updated._recentFunCategories.push(finishedInteraction.category);
+          if (updated._recentFunCategories.length > 8) {
+            updated._recentFunCategories = updated._recentFunCategories.slice(-8);
+          }
+        }
+
         // Done — clear interaction and go back to choosing
         updated.currentInteraction = null;
         updated.activityLabel = null;

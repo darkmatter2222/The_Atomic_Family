@@ -50,6 +50,72 @@ const STATE = {
   THINKING: 'thinking'
 };
 
+// ═══════════════════════════════════════════════════════════════
+//  CHILD FOLLOWING PARENT (goals.md)
+// ═══════════════════════════════════════════════════════════════
+// Young children (Jack 6, Lily 8) sometimes follow a parent when
+// insecure, bored, or seeking attention instead of picking their
+// own activity. Returns a follow-walk target or null.
+
+/**
+ * @param {object} child — the child member state
+ * @param {Array} family — all family member states
+ * @returns {{ targetPosition: {x,y,z}, parentName: string }|null}
+ */
+function checkChildFollowParent(child, family) {
+  // Only young children follow parents
+  if (child.name !== 'Jack' && child.name !== 'Lily') return null;
+
+  const needs = child.needs || {};
+  const social = needs.social || 50;
+  const comfort = needs.comfort || 50;
+  const fun = needs.fun || 50;
+
+  // Base chance: 15% for Jack (6yo, clingier), 8% for Lily (8yo, more independent)
+  let chance = child.name === 'Jack' ? 0.15 : 0.08;
+
+  // Low social need increases follow chance
+  if (social < 30) chance += 0.15;
+  else if (social < 50) chance += 0.05;
+
+  // Low comfort increases follow chance (want reassurance)
+  if (comfort < 30) chance += 0.10;
+
+  // Low fun — bored, goes to find a parent
+  if (fun < 25) chance += 0.08;
+
+  if (Math.random() > chance) return null;
+
+  // Find parents
+  const parents = family.filter(m => m.name === 'Dad' || m.name === 'Mom');
+  if (parents.length === 0) return null;
+
+  // Prefer closest parent, or the one not busy with another child
+  const parentDistances = parents.map(p => {
+    const dx = p.position.x - child.position.x;
+    const dz = p.position.z - child.position.z;
+    return { parent: p, dist: Math.sqrt(dx * dx + dz * dz) };
+  }).sort((a, b) => a.dist - b.dist);
+
+  const chosen = parentDistances[0].parent;
+
+  // Don't follow if already in same room and close
+  if (parentDistances[0].dist < 2.0) return null;
+
+  // Offset position slightly so kid stands near parent, not on top
+  const offsetX = (Math.random() - 0.5) * 1.5;
+  const offsetZ = (Math.random() - 0.5) * 1.5;
+
+  return {
+    targetPosition: {
+      x: chosen.position.x + offsetX,
+      y: 0,
+      z: chosen.position.z + offsetZ,
+    },
+    parentName: chosen.name,
+  };
+}
+
 /**
  * Mapping from need names to interaction categories that address them.
  */
@@ -237,6 +303,29 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
 
   switch (updated.state) {
     case STATE.CHOOSING: {
+      // ── Child-follows-parent check (goals.md #21) ──
+      // Young children sometimes path to a parent instead of picking own activity
+      if (updated._familyRef) {
+        const followResult = checkChildFollowParent(updated, updated._familyRef);
+        if (followResult) {
+          const startGrid = worldToGrid(updated.position.x, updated.position.z, gridData);
+          const endGrid = worldToGrid(followResult.targetPosition.x, followResult.targetPosition.z, gridData);
+          const rawPath = findPath(gridData.grid, startGrid, endGrid);
+          if (rawPath.length > 1) {
+            updated.path = smoothPath(rawPath, gridData);
+            updated.pathIndex = 0;
+            updated.state = STATE.WALKING;
+            updated.currentInteraction = null;
+            updated.activityLabel = `Following ${followResult.parentName}`;
+            updated.activityAnim = 'walk';
+            updated.targetFurniture = null;
+            updated._followingParent = followResult.parentName;
+            logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'walking', reason: `follow_parent:${followResult.parentName}` });
+            break;
+          }
+        }
+      }
+
       const wander = Math.random() < 0.10;
 
       if (wander) {
@@ -284,7 +373,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
       if (!dest) {
         updated.currentInteraction = interaction;
         updated.interactionTimer = 0;
-        updated.interactionDuration = rollDuration(interaction) * 60;
+        updated.interactionDuration = rollDuration(interaction, updated.name) * 60;
         updated.activityLabel = interaction.label;
         updated.activityAnim = interaction.animation;
         updated.state = STATE.PERFORMING;
@@ -316,7 +405,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         if (distToTarget < 2.0) {
           updated.currentInteraction = interaction;
           updated.interactionTimer = 0;
-          updated.interactionDuration = rollDuration(interaction) * 60;
+          updated.interactionDuration = rollDuration(interaction, updated.name) * 60;
           updated.activityLabel = interaction.label;
           updated.activityAnim = interaction.animation;
           updated.targetFurniture = dest.atFurniture;
@@ -359,8 +448,8 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
           // This applies to ALL steps in a plan — including step 1 (hasRemainingPlan).
           const hasRemainingPlan = Array.isArray(updated.activityPlan) && updated.activityPlan.length > 0;
           updated.interactionDuration = (updated._isPlanStep || hasRemainingPlan)
-            ? Math.max(30, rollDuration(updated.currentInteraction) * 60 * 0.5)
-            : rollDuration(updated.currentInteraction) * 60;
+            ? Math.max(30, rollDuration(updated.currentInteraction, updated.name) * 60 * 0.5)
+            : rollDuration(updated.currentInteraction, updated.name) * 60;
           updated.activityAnim = updated.currentInteraction.animation;
           updated.state = STATE.PERFORMING;
           updated.animFrame = 0;
@@ -434,14 +523,24 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         const progress = Math.min(updated.interactionTimer / updated.interactionDuration, 1);
         const newFraction = progress - (updated.effectsApplied || 0);
         if (newFraction > 0) {
+          // Build options for enhanced needs effects
+          const interaction = updated.currentInteraction;
+          const needsOptions = {
+            currentCategory: interaction.category,
+            recentCategories: (updated._recentFunCategories || []),
+            mealQuality: interaction._mealQuality || null,
+            isDrink: interaction.category === 'hydration' || (interaction.id && interaction.id.includes('drink')),
+            isCoffee: interaction.id && (interaction.id.includes('coffee') || interaction.id.includes('espresso')),
+          };
           updated.needs = applyNeedsEffects(
             updated.needs,
-            updated.currentInteraction.needsEffects,
-            newFraction
+            interaction.needsEffects,
+            newFraction,
+            needsOptions
           );
           updated.skills = applySkillEffects(
             updated.skills,
-            updated.currentInteraction.skillEffects,
+            interaction.skillEffects,
             newFraction
           );
           updated.effectsApplied = progress;
@@ -451,18 +550,38 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
       if (updated.interactionTimer >= updated.interactionDuration) {
         if (updated.currentInteraction && (updated.effectsApplied || 0) < 1) {
           const remaining = 1 - (updated.effectsApplied || 0);
+          const interaction = updated.currentInteraction;
+          const needsOptions = {
+            currentCategory: interaction.category,
+            recentCategories: (updated._recentFunCategories || []),
+            mealQuality: interaction._mealQuality || null,
+            isDrink: interaction.category === 'hydration' || (interaction.id && interaction.id.includes('drink')),
+            isCoffee: interaction.id && (interaction.id.includes('coffee') || interaction.id.includes('espresso')),
+          };
           updated.needs = applyNeedsEffects(
             updated.needs,
-            updated.currentInteraction.needsEffects,
-            remaining
+            interaction.needsEffects,
+            remaining,
+            needsOptions
           );
           updated.skills = applySkillEffects(
             updated.skills,
-            updated.currentInteraction.skillEffects,
+            interaction.skillEffects,
             remaining
           );
         }
         const finishedInteraction = updated.currentInteraction;
+
+        // Track recent fun categories for diminishing returns
+        if (finishedInteraction && finishedInteraction.category) {
+          if (!updated._recentFunCategories) updated._recentFunCategories = [];
+          updated._recentFunCategories.push(finishedInteraction.category);
+          // Keep last 8 activities (roughly 2-3 game hours)
+          if (updated._recentFunCategories.length > 8) {
+            updated._recentFunCategories = updated._recentFunCategories.slice(-8);
+          }
+        }
+
         updated.currentInteraction = null;
         updated.activityLabel = null;
         updated.activityAnim = null;
@@ -800,5 +919,6 @@ module.exports = {
   createFamilyMemberState,
   updateFamilyMember,
   commandFamilyMember,
+  checkChildFollowParent,
   STATE
 };

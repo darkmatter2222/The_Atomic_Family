@@ -209,8 +209,84 @@ function _groupBy(arr, key) {
   }, {});
 }
 
+/**
+ * Enrich a created action based on the character performing it.
+ * (goals.md: createAction should reflect personality — a cook's "make dinner"
+ * is different from a 5-year-old's "make dinner")
+ *
+ * @param {object} action - Classified action from classifyCreatedAction()
+ * @param {string} characterName - Who's doing it
+ * @param {object} skills - Character's skill levels
+ * @returns {object} Enriched action with adjusted effects
+ */
+function enrichCreatedAction(action, characterName, skills = {}) {
+  const enriched = { ...action, needsEffects: { ...action.needsEffects }, skillEffects: {} };
+
+  // ── Skill-based enrichment — map categories to skill growth ──
+  const CATEGORY_SKILL_MAP = {
+    cooking: { cooking: 0.2 },
+    creative: { creativity: 0.3 },
+    reading: { logic: 0.15 },
+    exercise: { fitness: 0.25 },
+    music: { creativity: 0.2 },
+    social: { charisma: 0.15 },
+    outdoor: { gardening: 0.1, fitness: 0.1 },
+    work: { logic: 0.1 },
+    chores: { handiness: 0.1 },
+  };
+  const skillMap = CATEGORY_SKILL_MAP[enriched.category];
+  if (skillMap) {
+    enriched.skillEffects = { ...skillMap };
+  }
+
+  // ── Character-specific adjustments ──
+  // Higher skill = more efficient (slightly better needs effects, shorter duration)
+  const relevantSkill = skillMap ? Object.keys(skillMap)[0] : null;
+  if (relevantSkill && skills[relevantSkill]) {
+    const skillLevel = skills[relevantSkill] || 0;
+    const efficiencyBonus = 1 + (skillLevel / 20); // Skill 10 = 50% more effective
+    // Boost positive needs effects by skill
+    for (const [key, val] of Object.entries(enriched.needsEffects)) {
+      if (val > 0) {
+        enriched.needsEffects[key] = Math.round(val * efficiencyBonus * 10) / 10;
+      }
+    }
+    // Slightly shorter duration for skilled characters
+    if (skillLevel > 5) {
+      enriched.duration = {
+        min: Math.max(3, Math.round(enriched.duration.min * 0.85)),
+        max: Math.max(5, Math.round(enriched.duration.max * 0.85)),
+      };
+    }
+  }
+
+  // ── Age-based adjustments ──
+  // Young kids take longer, use more energy, but have more fun
+  const AGE_ADJUSTMENTS = {
+    Jack: { funBonus: 5, energyPenalty: -3, durationMult: 1.2 },
+    Lily: { funBonus: 3, energyPenalty: -2, durationMult: 1.1 },
+    Emma: { funBonus: 0, energyPenalty: 0, durationMult: 1.0 },
+  };
+  const ageAdj = AGE_ADJUSTMENTS[characterName];
+  if (ageAdj) {
+    if (ageAdj.funBonus && enriched.needsEffects.fun) {
+      enriched.needsEffects.fun += ageAdj.funBonus;
+    }
+    if (ageAdj.energyPenalty && enriched.needsEffects.energy) {
+      enriched.needsEffects.energy += ageAdj.energyPenalty;
+    }
+    if (ageAdj.durationMult !== 1.0) {
+      enriched.duration.min = Math.round(enriched.duration.min * ageAdj.durationMult);
+      enriched.duration.max = Math.round(enriched.duration.max * ageAdj.durationMult);
+    }
+  }
+
+  return enriched;
+}
+
 module.exports = {
   classifyCreatedAction,
+  enrichCreatedAction,
   logCreatedAction,
   getCreatedActionStats,
   CATEGORY_KEYWORDS,

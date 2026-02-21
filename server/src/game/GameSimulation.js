@@ -11,6 +11,9 @@
 const { createFamily, updateFamilyMember, commandFamilyMember, STATE } = require('./FamilyMemberAI');
 const { HOUSE_LAYOUT } = require('./HouseLayout');
 const AgenticEngine = require('./AgenticEngine');
+const WorldState = require('./WorldState');
+const WeatherSystem = require('./WeatherSystem');
+const { checkForAccident, rollEnvironmentalEvents, checkForBedWetting } = require('./HouseholdEvents');
 const { recordMemory } = require('./MemoryManager');
 const logger = require('./SimulationLogger');
 
@@ -78,6 +81,14 @@ class GameSimulation {
     this.agenticEngine = new AgenticEngine();
     this.agenticEngine.initializePersonas(this.family);
     this.agenticEngine.checkLLMAvailability();
+
+    // ── World state (goals.md: food, mess, laundry, bathroom) ──
+    this.worldState = new WorldState();
+    this.agenticEngine.worldState = this.worldState;
+
+    // ── Weather system (goals.md: thunderstorms, heat, rain, beautiful evenings) ──
+    this.weatherSystem = new WeatherSystem();
+    this.agenticEngine.weatherSystem = this.weatherSystem;
 
     // ── Tick control ──
     this.tickRate = 10;                  // ticks per second
@@ -171,6 +182,93 @@ class GameSimulation {
     // ── Resolve character collisions (nudge overlapping characters) ──
     this._resolveCollisions();
 
+    // ── Tick world state (food freshness, mess entropy, laundry timers) ──
+    const gameMinutesElapsed = dt / 60;
+    this.worldState.tickMess(gameHoursElapsed);
+    this.worldState.tickLaundry(gameMinutesElapsed);
+
+    // Track mess from active activities
+    for (const m of this.family) {
+      if (m.currentInteraction && m.currentInteraction.category) {
+        // Only add mess once when activity starts (check effectsApplied)
+        if ((m.effectsApplied || 0) < 0.05) {
+          this.worldState.addMess(m.currentRoom, m.currentInteraction.category);
+        }
+      }
+    }
+
+    // Accumulate dirty laundry (about 1 item per character per 6 game-hours)
+    if (Math.random() < gameHoursElapsed / 6) {
+      this.worldState.addDirtyClothes(1);
+    }
+
+    // ── Tick weather system ──
+    this.weatherSystem.tick(gameHour, gameHoursElapsed);
+    const weatherEvents = this.weatherSystem.consumeEvents();
+    for (const evt of weatherEvents) {
+      this.agenticEngine.recentEvents.push(evt);
+    }
+
+    // ── Roll for environmental events (doorbell, power flicker, etc.) ──
+    const householdEvents = rollEnvironmentalEvents(gameHour, this.family, this.worldState);
+    for (const evt of householdEvents) {
+      this.agenticEngine.recentEvents.push(evt);
+    }
+
+    // ── Check for accidents during activities ──
+    for (const m of this.family) {
+      if (m.state === 'performing' && m.currentInteraction) {
+        const cat = m.currentInteraction.category;
+        const isOutdoor = m.currentRoom === '_exterior' || m.currentRoom === 'backyard';
+        const ps = this.agenticEngine.personaStates[m.name];
+        // Only check once per activity (early in the activity)
+        if ((m.effectsApplied || 0) < 0.15) {
+          const accident = checkForAccident(m.name, cat, {
+            skills: ps?.skills || {},
+            needs: m.needs,
+            isOutdoor,
+          });
+          if (accident) {
+            accident.room = accident.room || m.currentRoom;
+            this.agenticEngine.recentEvents.push(accident);
+            // Apply needs effects from accident
+            if (accident.needsEffect && m.needs) {
+              for (const [need, delta] of Object.entries(accident.needsEffect)) {
+                if (m.needs[need] !== undefined) {
+                  m.needs[need] = Math.max(0, Math.min(100, m.needs[need] + delta));
+                }
+              }
+            }
+            // Add mess from spills
+            if (accident.mess) {
+              this.worldState.addMess(m.currentRoom, 'spill');
+            }
+            console.log(`[Accident] ${accident.description}`);
+          }
+        }
+      }
+    }
+
+    // ── Nighttime bed-wetting check (Jack, 3-5am) ──
+    if (gameHour >= 3 && gameHour < 5 && Math.random() < gameHoursElapsed) {
+      for (const m of this.family) {
+        if (m.activityLabel && m.activityLabel.toLowerCase().includes('sleep')) {
+          const bedwet = checkForBedWetting(m.name, m.needs?.hydration || 50);
+          if (bedwet) {
+            this.agenticEngine.recentEvents.push(bedwet);
+            if (bedwet.needsEffect && m.needs) {
+              for (const [need, delta] of Object.entries(bedwet.needsEffect)) {
+                if (m.needs[need] !== undefined) {
+                  m.needs[need] = Math.max(0, Math.min(100, m.needs[need] + delta));
+                }
+              }
+            }
+            console.log(`[Accident] ${bedwet.description}`);
+          }
+        }
+      }
+    }
+
     // ── Smart per-room light management ──
     //    Instead of toggling ALL rooms at once, manage lights based on:
     //    1. Occupancy: turn off lights in empty rooms at night
@@ -249,6 +347,8 @@ class GameSimulation {
       roomLights: this.roomLights,
       lightsAuto: this.lightsAuto,
       agenticState: this.agenticEngine.serialize(),
+      worldState: this.worldState.serialize(),
+      weather: this.weatherSystem.serialize(),
     };
     this.io.volatile.emit('gameState', state);
   }
@@ -266,6 +366,8 @@ class GameSimulation {
       roomLights: this.roomLights,
       lightsAuto: this.lightsAuto,
       agenticState: this.agenticEngine.serialize(),
+      worldState: this.worldState.serialize(),
+      weather: this.weatherSystem.serialize(),
     };
     socket.emit('gameState', state);
   }

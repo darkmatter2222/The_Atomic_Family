@@ -209,14 +209,46 @@ export function decayNeeds(needs, gameHours, currentHour) {
  * @param {number} fraction    – 0-1, how much of the effect to apply (1 = full)
  * @returns {Object} updated needs
  */
-export function applyNeedsEffects(needs, needsEffects, fraction = 1) {
+export function applyNeedsEffects(needs, needsEffects, fraction = 1, options = {}) {
   if (!needsEffects) return needs;
   const updated = { ...needs };
   for (const [key, amount] of Object.entries(needsEffects)) {
     if (updated[key] !== undefined) {
-      updated[key] = Math.max(0, Math.min(100, updated[key] + amount * fraction));
+      let adjustedAmount = amount;
+
+      // ── Diminishing returns on fun (goals.md: repetition kills fun) ──
+      if (key === 'fun' && amount > 0 && options.recentCategories && options.currentCategory) {
+        const repeatCount = options.recentCategories.filter(c => c === options.currentCategory).length;
+        const diminishingFactor = repeatCount === 0 ? 1.0
+          : repeatCount === 1 ? 0.75
+          : repeatCount === 2 ? 0.50
+          : 0.30;
+        adjustedAmount = amount * diminishingFactor;
+      }
+
+      // ── Meal quality scaling (goals.md: home-cooked > microwave > cold snack) ──
+      if (key === 'hunger' && amount > 0 && options.mealQuality) {
+        const qualityMultipliers = {
+          'home_cooked': 1.3,
+          'grilled':     1.25,
+          'reheated':    0.85,
+          'cold':        0.70,
+          'junk':        0.60,
+        };
+        const mult = qualityMultipliers[options.mealQuality] || 1.0;
+        adjustedAmount = amount * mult;
+      }
+
+      updated[key] = Math.max(0, Math.min(100, updated[key] + adjustedAmount * fraction));
     }
   }
+
+  // ── Bladder acceleration from drinks ──
+  if (options.isDrink && updated.bladder !== undefined) {
+    const bladderHit = options.isCoffee ? -8 : -5;
+    updated.bladder = Math.max(0, updated.bladder + bladderHit);
+  }
+
   return updated;
 }
 

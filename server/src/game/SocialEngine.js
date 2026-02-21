@@ -33,7 +33,7 @@ const logger = require('./SimulationLogger');
 
 const MAX_GLOBAL_LOG = 200;       // Global conversation log limit
 const SPEECH_DISPLAY_MS = 6000;   // How long speech bubbles last
-const MAX_THREAD_TURNS = 6;       // Max back-and-forth turns per thread
+const MAX_THREAD_TURNS = 20;      // Max back-and-forth turns per thread (goals.md: up to 20 for deep conversations)
 const THREAD_TIMEOUT_MS = 90000;  // Thread expires after 90s of no activity (LLM calls take 15-40s)
 const THREAD_RETAIN_MS = 600000;  // Keep expired threads for 10 minutes
 const THREAD_RESPONSE_WINDOW_MS = 45000; // 45s for forced interrupts (LLM pipelines take 15-40s)
@@ -158,6 +158,7 @@ class SocialEngine {
           if (!this._areInSameRoom(speakerName, threadTarget, family)) {
             // They've moved apart — end the thread
             existingThread.endedManually = true;
+            existingThread.markUnresolved(); // Track unresolved topics
             speakerState.pendingReply = null;
             speakerState.activeThreadId = null;
             this._setPairCooldown(speakerName, threadTarget);
@@ -185,6 +186,7 @@ class SocialEngine {
             // If farewell, end the thread
             if (isFarewell) {
               thread.endedManually = true;
+              thread.endedWithFarewell = true; // Graceful ending
               speakerState.activeThreadId = null;
               this._setPairCooldown(speakerName, threadTarget);
               // Clear the other participant's state too
@@ -222,6 +224,7 @@ class SocialEngine {
               }
             } else {
               // Thread is over (max turns reached) — set pair cooldown
+              thread.markUnresolved(); // Track unresolved topics
               this._setPairCooldown(speakerName, threadTarget);
               // Clear both participants' conversation state
               speakerState.activeThreadId = null;
@@ -358,13 +361,32 @@ class SocialEngine {
     }
 
     // ── Room-wide speech — everyone in the room "hears" it ──
+    // (goals.md: group conversations with 3+ people)
     if (!targetName || targetName === 'everyone' || targetName === 'room') {
       const hearers = this._getCharactersInRoom(room, family, speakerName);
-      // Only process if someone is actually in the room
       if (hearers.length > 0) {
         for (const hearer of hearers) {
           if (personaStates[hearer]) {
             addConversation(personaStates[hearer], speakerName, 'everyone', text, emotion);
+          }
+        }
+        // If 2+ people hear room-wide speech, check for active group thread or create one
+        if (hearers.length >= 2 && !isFarewell) {
+          const existingGroupThread = this._findGroupThread(room);
+          if (existingGroupThread && existingGroupThread.isActive()) {
+            // Add to existing group thread
+            existingGroupThread.addTurn(speakerName, text, emotion);
+            // Add any new hearers to participants
+            for (const h of hearers) {
+              if (!existingGroupThread.participants.includes(h)) {
+                existingGroupThread.participants.push(h);
+              }
+            }
+            entry.threadId = existingGroupThread.id;
+          } else {
+            // Start a new group thread (all in room are participants)
+            const groupThread = this._startGroupThread(speakerName, hearers, text, emotion, room);
+            entry.threadId = groupThread.id;
           }
         }
       }
@@ -385,9 +407,13 @@ class SocialEngine {
     }
 
     // Queue speech bubble for broadcast
+    // Whispers have shorter display time and are room-constrained (goals.md)
+    const displayMs = speechType === 'whisper' ? SPEECH_DISPLAY_MS * 0.6 : SPEECH_DISPLAY_MS;
     this.speechQueue.push({
       ...entry,
-      expiresAt: timestamp + SPEECH_DISPLAY_MS,
+      expiresAt: timestamp + displayMs,
+      isWhisper: speechType === 'whisper',
+      isNonverbal: speechType === 'nonverbal',
     });
 
     // Log the speech with positions
@@ -456,6 +482,58 @@ class SocialEngine {
   }
 
   /**
+   * Find an active group thread in a given room.
+   * (goals.md: group conversations with 3+ participants)
+   */
+  _findGroupThread(room) {
+    for (const [, thread] of this.threads) {
+      if (!thread.isActive()) continue;
+      if (thread.room === room && thread.participants.length >= 3) {
+        return thread;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Start a new group conversation thread.
+   * Unlike 2-person threads, group threads don't create forced reply obligations.
+   */
+  _startGroupThread(initiator, otherParticipants, text, emotion, room) {
+    const threadId = `group_${this.nextThreadId++}`;
+    const thread = new ConversationThread(threadId, initiator, otherParticipants[0], room);
+    // Add all participants
+    for (const p of otherParticipants) {
+      if (!thread.participants.includes(p)) {
+        thread.participants.push(p);
+      }
+    }
+    thread.addTurn(initiator, text, emotion);
+    thread.topic = thread._detectTopic(text);
+
+    this.threads.set(threadId, thread);
+
+    if (this.threads.size > MAX_ACTIVE_THREADS) {
+      this._cleanupThreads();
+    }
+
+    logger.logConversation({
+      conversationId: threadId,
+      action: 'group_started',
+      speaker: initiator,
+      target: 'everyone',
+      text,
+      emotion,
+      room,
+      turnNumber: 1,
+      threadLength: 1,
+      participants: thread.participants,
+    });
+
+    return thread;
+  }
+
+  /**
    * Check if speech should interrupt the target character.
    * Returns an interrupt object or null.
    */
@@ -479,12 +557,39 @@ class SocialEngine {
     let shouldInterrupt = false;
     let reason = '';
 
+    // ── Authority/obedience modeling (goals.md: personality-based compliance) ──
+    // Children have different obedience thresholds based on personality
+    const OBEDIENCE_PROBABILITY = {
+      Emma: 0.55,   // Defiant teen — often pushes back, but eventually complies
+      Lily: 0.85,   // Eager to please — high compliance
+      Jack: 0.40,   // Not defiant, just... distracted. Didn't hear you.
+    };
+
     // Parent calling a child — high priority
     if ((speaker.role === 'father' || speaker.role === 'mother') &&
         (target.role === 'son' || target.role === 'daughter')) {
       if (speechType === 'command' || speechType === 'yell') {
-        shouldInterrupt = true;
-        reason = `Parent ${speakerName} called ${targetName} with authority`;
+        // Authority commands use obedience probability
+        // BUT: yelling always gets attention, commands are probabilistic
+        const obedienceRoll = Math.random();
+        const threshold = OBEDIENCE_PROBABILITY[targetName] || 0.70;
+        // Yelling overrides personality resistance; repeated calls escalate
+        const callCount = (targetState.unansweredCalls || 0);
+        const escalationBonus = callCount * 0.25; // Each ignored call makes next more likely
+        if (speechType === 'yell' || obedienceRoll < (threshold + escalationBonus)) {
+          shouldInterrupt = true;
+          reason = `Parent ${speakerName} called ${targetName} with authority`;
+          if (callCount > 0) reason += ` (${callCount + 1}x — escalating)`;
+        } else {
+          // Child "didn't hear" or is ignoring — track for escalation
+          targetState.unansweredCalls = (targetState.unansweredCalls || 0) + 1;
+          reason = `${targetName} ignored ${speakerName}'s command (obedience: ${Math.round(threshold * 100)}%)`;
+          logger.logEvent({
+            type: 'disobedience',
+            message: reason,
+            data: { speaker: speakerName, target: targetName, callCount: targetState.unansweredCalls },
+          });
+        }
       } else if (speechType === 'question') {
         if (targetState.unansweredCalls > 0) {
           shouldInterrupt = true;
@@ -830,6 +935,30 @@ class SocialEngine {
     const persona = getPersona(speakerName);
     const isParent = persona?.role === 'father' || persona?.role === 'mother';
 
+    // Whispered speech (goals.md: whispered conversations stay in-room only)
+    if (lower.includes('*whisper') || lower.includes('(whisper') || lower.includes('[whisper') ||
+        lower.startsWith('psst') || lower.includes('quietly') ||
+        lower.includes('leans in') || lower.includes('leans close') ||
+        lower.includes('under breath') || lower.includes('murmur') ||
+        (lower.includes('whisper') && lower.includes('to'))) {
+      return 'whisper';
+    }
+
+    // Nonverbal communication (goals.md: gestures, expressions, body language, sighs)
+    if (lower.startsWith('*') && lower.endsWith('*')) return 'nonverbal';
+    if (lower.startsWith('[') && lower.endsWith(']')) return 'nonverbal';
+    if (lower.match(/^\*[^*]+\*$/)) return 'nonverbal';
+    // Detect action-only text: sighs, eye-rolls, gestures, nods, shrugs
+    const nonverbalPatterns = [
+      /^\*?sighs?\*?\.?$/i, /^\*?eye.?roll/i, /^\*?shrugs?\*?\.?$/i,
+      /^\*?nods?\*?\.?$/i, /^\*?waves?\*?\.?$/i, /^\*?points?\s/i,
+      /^\*?hugs?\s/i, /^\*?crosses.arms/i, /^\*?shakes.head/i,
+      /^\*?smiles?\*?\.?$/i, /^\*?frowns?\*?\.?$/i, /^\*?glares?\*?/i,
+      /^\*?thumbs.up/i, /^\*?yawns?\*?\.?$/i, /^\*?stretches?\*?\.?$/i,
+      /^\*?taps.foot/i, /^\*?looks away/i, /^\*?makes face/i,
+    ];
+    if (nonverbalPatterns.some(p => p.test(lower))) return 'nonverbal';
+
     // Commands (imperative)
     if (isParent && (lower.includes('come here') || lower.includes('come downstairs') ||
         lower.includes('dinner') || lower.includes('time to') || lower.includes('bedtime') ||
@@ -948,6 +1077,39 @@ class SocialEngine {
   }
 
   /**
+   * Get unresolved topics for a character (goals.md: unresolved topics resurface).
+   * Returns topics from conversations that ended without closure.
+   * Used by the reasoning pipeline to inform the LLM of "loose threads."
+   *
+   * @param {string} characterName
+   * @param {number} maxAge - Max age in minutes (default: 120 = 2 game hours)
+   * @returns {Array} Unresolved topics with context
+   */
+  getUnresolvedTopics(characterName, maxAge = 120) {
+    const cutoff = Date.now() - (maxAge * 60000);
+    const topics = [];
+
+    for (const [, thread] of this.threads) {
+      if (!thread.participants.includes(characterName)) continue;
+      if (thread.unresolvedTopics.length === 0) continue;
+
+      for (const topic of thread.unresolvedTopics) {
+        if (topic.timestamp > cutoff) {
+          const otherPerson = thread.participants.find(p => p !== characterName);
+          topics.push({
+            ...topic,
+            withCharacter: otherPerson,
+            threadId: thread.id,
+          });
+        }
+      }
+    }
+
+    // Sort most recent first, limit to 5
+    return topics.sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+  }
+
+  /**
    * Serialize social state for broadcast to clients.
    */
   serialize() {
@@ -1025,6 +1187,8 @@ class ConversationThread {
     this.topic = null;
     this.timedOut = false;
     this.endedManually = false;
+    this.unresolvedTopics = [];    // Topics left hanging (goals.md: unresolved topics resurface)
+    this.endedWithFarewell = false; // Whether conversation ended gracefully
   }
 
   addTurn(speaker, text, emotion) {
@@ -1052,6 +1216,42 @@ class ConversationThread {
     return !this.isActive();
   }
 
+  /**
+   * Mark this thread as ended and detect unresolved topics.
+   * Called when thread ends by timeout, max turns, or moving apart (NOT farewell).
+   */
+  markUnresolved() {
+    if (this.endedWithFarewell) return; // Clean endings don't leave loose threads
+
+    // Check if there are unanswered questions
+    const lastFewTurns = this.turns.slice(-3);
+    for (const turn of lastFewTurns) {
+      if (turn.text.includes('?')) {
+        this.unresolvedTopics.push({
+          type: 'unanswered_question',
+          speaker: turn.speaker,
+          text: turn.text,
+          topic: this.topic || 'general',
+          timestamp: turn.timestamp,
+        });
+      }
+    }
+
+    // If conversation had a clear topic and ended abruptly, that's unresolved too
+    if (this.topic && this.topic !== 'general' && this.turns.length >= 3) {
+      const alreadyTracked = this.unresolvedTopics.some(t => t.topic === this.topic);
+      if (!alreadyTracked) {
+        this.unresolvedTopics.push({
+          type: 'interrupted_topic',
+          speaker: this.turns[this.turns.length - 1].speaker,
+          text: `Conversation about ${this.topic} ended abruptly`,
+          topic: this.topic,
+          timestamp: Date.now(),
+        });
+      }
+    }
+  }
+
   _detectTopic(text) {
     const lower = text.toLowerCase();
     if (lower.includes('dinner') || lower.includes('eat') || lower.includes('food') || lower.includes('hungry')) return 'food';
@@ -1064,5 +1264,120 @@ class ConversationThread {
     return 'general';
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  LIE DETECTION SYSTEM (goals.md #28)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Determine if a listener suspects the speaker is lying, based on:
+ *  - Known facts / past statements (contradiction detection)
+ *  - Personality (openness, agreeableness affect gullibility)
+ *  - Relationship trust level
+ *  - Age (kids are more obvious liars; adults detect better)
+ *
+ * @param {string} speakerName
+ * @param {string} listenerName
+ * @param {string} speechText — what was said
+ * @param {object} context — { relationship, listenerPersonality, speakerAge, listenerAge, knownFacts }
+ * @returns {{ suspected: boolean, confidence: number, reason: string }|null}
+ */
+function detectLie(speakerName, listenerName, speechText, context = {}) {
+  const text = speechText.toLowerCase();
+
+  // Hedging/deception linguistic cues
+  const deceptionCues = [
+    /\bi didn'?t\b.*\bhonest\b/,
+    /\bi swear\b/,
+    /\bi promise\b.*\breally\b/,
+    /\bno,?\s*(honestly|seriously|truly)\b/,
+    /\bit wasn'?t me\b/,
+    /\bi would never\b/,
+    /\bwhy would i\b/,
+    /\bi have no idea\b/,
+    /\bmaybe\b.*\bi don'?t (know|remember)\b/,
+    /\bum+\b.*\bwell\b/,
+  ];
+
+  let cueScore = 0;
+  let detectedCues = [];
+  for (const cue of deceptionCues) {
+    if (cue.test(text)) {
+      cueScore += 0.15;
+      detectedCues.push(cue.source);
+    }
+  }
+
+  // Over-explanation (long defensive responses are suspicious)
+  if (text.length > 150 && (text.includes('because') || text.includes('the reason'))) {
+    cueScore += 0.1;
+    detectedCues.push('over_explanation');
+  }
+
+  // Nothing suspicious linguistically
+  if (cueScore === 0) return null;
+
+  const { relationship, listenerPersonality, speakerAge = 30, listenerAge = 30, knownFacts = [] } = context;
+
+  // Contradiction with known facts
+  let contradictionBonus = 0;
+  for (const fact of knownFacts) {
+    const factLower = (fact.text || '').toLowerCase();
+    // Simple: if the speech directly contradicts a known statement
+    if (factLower && text.includes('didn\'t') && factLower.includes('did')) {
+      contradictionBonus += 0.25;
+      detectedCues.push('contradicts_known_fact');
+      break;
+    }
+  }
+
+  // Relationship trust — high trust makes detection harder
+  let trustModifier = 0;
+  if (relationship) {
+    const trust = relationship.trust || 50;
+    trustModifier = (50 - trust) / 200; // -0.25 to +0.25
+  }
+
+  // Personality factors (listener)
+  let personalityModifier = 0;
+  if (listenerPersonality) {
+    // High openness = more perceptive (better at detecting)
+    personalityModifier += (listenerPersonality.openness || 50) / 500;
+    // High agreeableness = more trusting (worse at detecting)
+    personalityModifier -= (listenerPersonality.agreeableness || 50) / 500;
+    // Low neuroticism = calmer, better judgment
+    personalityModifier += (100 - (listenerPersonality.neuroticism || 50)) / 1000;
+  }
+
+  // Age factors: kids are terrible liars; parents detect better
+  let ageModifier = 0;
+  if (speakerAge < 10) ageModifier += 0.2;  // Kids lie obviously
+  else if (speakerAge < 15) ageModifier += 0.1; // Teens are better
+  if (listenerAge > 30) ageModifier += 0.05; // Parents have radar
+
+  // Mom has legendary lie detection
+  if (listenerName === 'Mom') ageModifier += 0.15;
+
+  const totalConfidence = Math.min(cueScore + contradictionBonus + trustModifier + personalityModifier + ageModifier, 1.0);
+
+  // Threshold: need at least 30% confidence to suspect
+  if (totalConfidence < 0.3) return null;
+
+  // Build reason string
+  const reasons = [];
+  if (detectedCues.includes('over_explanation')) reasons.push('they\'re being overly defensive');
+  if (detectedCues.includes('contradicts_known_fact')) reasons.push('that contradicts something I know');
+  if (cueScore > 0.2) reasons.push('something about the way they said it');
+  if (speakerAge < 10 && listenerAge > 25) reasons.push('kids are terrible at hiding things');
+
+  return {
+    suspected: true,
+    confidence: Math.round(totalConfidence * 100) / 100,
+    reason: reasons.length > 0 ? reasons.join('; ') : 'gut feeling',
+    cues: detectedCues,
+  };
+}
+
+SocialEngine.detectLie = detectLie;
 
 module.exports = SocialEngine;

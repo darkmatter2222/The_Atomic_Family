@@ -61,9 +61,31 @@ function filterByTimeWindow(interactions, gameHour) {
 /**
  * Pick a random duration (in game minutes) from the interaction's range.
  */
-function rollDuration(interaction) {
+/**
+ * Attention span multipliers per character.
+ * Per goals.md: Jack cycles activities every 15-20 minutes (short attention).
+ * Adults sustain longer activities. Emma hyperfocuses on art/reading.
+ */
+const ATTENTION_SPAN = {
+  Dad:  { default: 1.0, work: 1.2, fix: 1.3 },           // Patient, focused worker
+  Mom:  { default: 1.0, cooking: 1.1, gardening: 1.2 },   // Steady, multitasker
+  Emma: { default: 0.85, creative: 1.4, reading: 1.5, social: 0.7 }, // Hyperfocus on interests, low patience for socializing
+  Lily: { default: 0.8, creative: 1.1, playing: 0.9 },    // Good attention for age, art-focused
+  Jack: { default: 0.55, active: 0.7, fun: 0.65, eating: 0.5 }, // 15-20 min attention span = ~0.55x of normal durations
+};
+
+function rollDuration(interaction, characterName = null) {
   const { min, max } = interaction.duration;
-  return min + Math.random() * (max - min);
+  let base = min + Math.random() * (max - min);
+
+  if (characterName && ATTENTION_SPAN[characterName]) {
+    const spans = ATTENTION_SPAN[characterName];
+    const cat = interaction.category;
+    const multiplier = spans[cat] || spans.default || 1.0;
+    base *= multiplier;
+  }
+
+  return base;
 }
 
 function getCategories() {
@@ -238,14 +260,48 @@ function decayNeeds(needs, gameHours, currentHour, characterName) {
   return updated;
 }
 
-function applyNeedsEffects(needs, needsEffects, fraction = 1) {
+function applyNeedsEffects(needs, needsEffects, fraction = 1, options = {}) {
   if (!needsEffects) return needs;
   const updated = { ...needs };
   for (const [key, amount] of Object.entries(needsEffects)) {
     if (updated[key] !== undefined) {
-      updated[key] = Math.max(0, Math.min(100, updated[key] + amount * fraction));
+      let adjustedAmount = amount;
+
+      // ── Diminishing returns on fun (goals.md: repetition kills fun) ──
+      // If fun is being gained and we have repetition info, reduce gains
+      if (key === 'fun' && amount > 0 && options.recentCategories && options.currentCategory) {
+        const repeatCount = options.recentCategories.filter(c => c === options.currentCategory).length;
+        // 1st time: 100%, 2nd: 75%, 3rd: 50%, 4th+: 30%
+        const diminishingFactor = repeatCount === 0 ? 1.0
+          : repeatCount === 1 ? 0.75
+          : repeatCount === 2 ? 0.50
+          : 0.30;
+        adjustedAmount = amount * diminishingFactor;
+      }
+
+      // ── Meal quality scaling (goals.md: home-cooked > microwave > cold snack) ──
+      if (key === 'hunger' && amount > 0 && options.mealQuality) {
+        const qualityMultipliers = {
+          'home_cooked': 1.3,  // Full home-cooked meal: 130% satisfaction
+          'grilled':     1.25, // Dad's grilling: 125%
+          'reheated':    0.85, // Microwave/leftovers: 85%
+          'cold':        0.70, // Cold snack: 70%
+          'junk':        0.60, // Junk food: 60% (fills but doesn't satisfy)
+        };
+        const mult = qualityMultipliers[options.mealQuality] || 1.0;
+        adjustedAmount = amount * mult;
+      }
+
+      updated[key] = Math.max(0, Math.min(100, updated[key] + adjustedAmount * fraction));
     }
   }
+
+  // ── Bladder acceleration from drinks (goals.md: +5 after drinks, +8 after coffee) ──
+  if (options.isDrink && updated.bladder !== undefined) {
+    const bladderHit = options.isCoffee ? -8 : -5; // Negative = filling bladder faster
+    updated.bladder = Math.max(0, updated.bladder + bladderHit);
+  }
+
   return updated;
 }
 

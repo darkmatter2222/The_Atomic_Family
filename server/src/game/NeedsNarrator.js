@@ -146,7 +146,7 @@ const CHARACTER_QUIRKS = {
  * @param {string} name - Character name (Dad, Mom, Emma, Lily, Jack)
  * @param {object} needs - Raw needs values { energy, hunger, hygiene, social, fun, comfort, bladder }
  * @param {number} gameHour - Current game hour (0-24 float)
- * @param {object} context - { lastMeal, currentActivity, recentConversations, mood }
+ * @param {object} context - { lastMeal, currentActivity, recentConversations, mood, weather }
  * @returns {string} First-person body sensation narrative
  */
 function narrateNeeds(name, needs, gameHour, context = {}) {
@@ -162,8 +162,8 @@ function narrateNeeds(name, needs, gameHour, context = {}) {
   // ── Hunger ──
   lines.push(_narrateHunger(name, needs.hunger || 50, gameHour, quirks.hunger, persona, context));
 
-  // ── Physical (Hygiene + Comfort) ──
-  lines.push(_narratePhysical(name, needs.hygiene || 50, needs.comfort || 50, gameHour, quirks.hygiene, quirks.comfort, persona));
+  // ── Physical (Hygiene + Comfort + Weather) ──
+  lines.push(_narratePhysical(name, needs.hygiene || 50, needs.comfort || 50, gameHour, quirks.hygiene, quirks.comfort, persona, context.weather));
 
   // ── Bladder (only mention if relevant) ──
   const bladderLine = _narrateBladder(name, needs.bladder || 50, quirks.bladder, persona);
@@ -250,7 +250,7 @@ function _narrateHunger(name, value, gameHour, quirk, persona, context) {
   return `YOUR STOMACH:\n${desc}`;
 }
 
-function _narratePhysical(name, hygiene, comfort, gameHour, hygieneQuirk, comfortQuirk, persona) {
+function _narratePhysical(name, hygiene, comfort, gameHour, hygieneQuirk, comfortQuirk, persona, weather) {
   const hStyle = hygieneQuirk?.style || 'normal';
   const cStyle = comfortQuirk?.style || 'normal';
   const parts = [];
@@ -276,23 +276,106 @@ function _narratePhysical(name, hygiene, comfort, gameHour, hygieneQuirk, comfor
     else parts.push(`You feel disgusting. You desperately need to clean up.`);
   }
 
-  // Comfort
+  // Comfort — now weather-linked per goals.md
   if (comfort > 70) {
     if (cStyle === 'very-sensitive') parts.push(`You feel cozy and safe. Clover is nearby. Everything is soft and warm.`);
     else if (cStyle !== 'oblivious') parts.push(`You\'re physically comfortable.`);
+    // Weather adds texture even when comfortable
+    if (weather) {
+      const weatherComfort = _getWeatherComfortNote(name, weather, true);
+      if (weatherComfort) parts.push(weatherComfort);
+    }
   } else if (comfort > 40) {
     if (cStyle === 'very-sensitive') parts.push(`Something feels... off. Maybe your clothes are scratchy, or you\'ve been sitting the wrong way. You keep fidgeting.`);
     else if (cStyle === 'oblivious') {} // Jack doesn't notice
     else parts.push(`You\'re a little uncomfortable but managing.`);
+    if (weather) {
+      const weatherComfort = _getWeatherComfortNote(name, weather, false);
+      if (weatherComfort) parts.push(weatherComfort);
+    }
   } else if (comfort > 20) {
     if (cStyle === 'very-sensitive') parts.push(`You are REALLY uncomfortable and it\'s all you can think about. Your clothes feel wrong, the chair is hard, everything is bad. You want to curl up on the couch with a blanket.`);
     else if (cStyle === 'stoic') parts.push(`You\'re uncomfortable but you don\'t say anything. Just endure it.`);
     else parts.push(`You\'re quite uncomfortable. Hard to focus.`);
+    if (weather) {
+      const weatherComfort = _getWeatherComfortNote(name, weather, false);
+      if (weatherComfort) parts.push(weatherComfort);
+    }
   } else {
     parts.push(`PHYSICALLY MISERABLE. Everything hurts or feels wrong.`);
+    if (weather) {
+      const weatherComfort = _getWeatherComfortNote(name, weather, false);
+      if (weatherComfort) parts.push(weatherComfort);
+    }
   }
 
   return `PHYSICALLY:\n${parts.join(' ')}`;
+}
+
+/**
+ * Generate a weather-linked comfort note per goals.md.
+ * Weather affects how comfort FEELS.
+ */
+function _getWeatherComfortNote(name, weather, isComfortable) {
+  if (!weather || !weather.description) return null;
+  const desc = (weather.description || '').toLowerCase();
+
+  // Rainy
+  if (desc.includes('rain') || desc.includes('storm')) {
+    if (isComfortable) {
+      const cozy = {
+        Dad: 'The rain outside makes indoors feel extra cozy.',
+        Mom: 'Rain on the roof — a good day to be inside.',
+        Emma: 'The sound of rain is actually really nice. Good reading weather.',
+        Lily: 'The rain is making tap-tap-tap sounds! Cozy inside.',
+        Jack: 'It\'s raining. BORING. But the couch is warm.',
+      };
+      return cozy[name] || null;
+    } else {
+      return desc.includes('storm') ? 'The storm outside isn\'t helping.' : null;
+    }
+  }
+
+  // Hot
+  if (desc.includes('hot') || desc.includes('heat') || desc.includes('scorching')) {
+    if (!isComfortable) {
+      const hot = {
+        Dad: 'The heat isn\'t helping. Even inside it feels stuffy.',
+        Mom: 'It\'s so hot. The AC can only do so much.',
+        Emma: 'Ugh, it\'s sweltering. Nothing feels right.',
+        Lily: 'It\'s TOO HOT. Everything is sticky and gross.',
+        Jack: 'You\'re sweaty. But that\'s fine. MORE WATER.',
+      };
+      return hot[name] || 'The heat is making things worse.';
+    }
+  }
+
+  // Cold
+  if (desc.includes('cold') || desc.includes('freezing') || desc.includes('chilly')) {
+    if (isComfortable) {
+      return name === 'Lily' ? 'Wrapped up warm — the cold outside makes the blanket feel extra snuggly.' : null;
+    } else {
+      const cold = {
+        Lily: 'It\'s COLD and you can\'t get warm. Where\'s your blanket?',
+        Jack: 'Brrr. Your fingers are cold.',
+        Emma: 'The cold seeping in through the window doesn\'t help.',
+      };
+      return cold[name] || null;
+    }
+  }
+
+  // Sunny / nice
+  if (desc.includes('sunny') || desc.includes('clear') || desc.includes('pleasant')) {
+    if (isComfortable) {
+      const sunny = {
+        Lily: 'The sunshine coming through the window feels warm on your skin!',
+        Jack: 'The sun is SO BRIGHT and AWESOME!',
+      };
+      return sunny[name] || null;
+    }
+  }
+
+  return null;
 }
 
 function _narrateBladder(name, value, quirk, persona) {
