@@ -53,7 +53,7 @@ const TABS = [
   { id: 'stats',    label: '📊 Stats' },
 ];
 
-export default function ConversationViewer({ agenticState, selectedCharacter, onClose, onThoughtClick, onConversationClick }) {
+export default function ConversationViewer({ agenticState, selectedCharacter, onClose, onThoughtClick, onConversationClick, onPopOut, isPopped, dragHandleProps, style }) {
   const [activeTab, setActiveTab] = useState('timeline');
   const [filter, setFilter] = useState('all');
   const [showThoughts, setShowThoughts] = useState(true);
@@ -67,8 +67,8 @@ export default function ConversationViewer({ agenticState, selectedCharacter, on
 
   if (!enabled) {
     return (
-      <div style={panelStyle}>
-        <PanelHeader onClose={onClose} stats={null} />
+      <div style={{ ...panelStyle, ...style }}>
+        <PanelHeader onClose={onClose} stats={null} onPopOut={onPopOut} isPopped={isPopped} dragHandleProps={dragHandleProps} />
         <div style={{ padding: 30, textAlign: 'center', color: '#666' }}>
           <div style={{ fontSize: 42, marginBottom: 14 }}>🤖</div>
           <div style={{ fontSize: 14 }}>Agentic AI is not active</div>
@@ -81,8 +81,8 @@ export default function ConversationViewer({ agenticState, selectedCharacter, on
   }
 
   return (
-    <div style={panelStyle}>
-      <PanelHeader onClose={onClose} stats={stats} llmAvailable={agenticState?.llmAvailable} />
+    <div style={{ ...panelStyle, ...style }}>
+      <PanelHeader onClose={onClose} stats={stats} llmAvailable={agenticState?.llmAvailable} onPopOut={onPopOut} isPopped={isPopped} dragHandleProps={dragHandleProps} />
 
       {/* Token stats bar */}
       <TokenStatsBar stats={stats} />
@@ -136,16 +136,20 @@ export default function ConversationViewer({ agenticState, selectedCharacter, on
  *  Panel Header
  * ════════════════════════════════════════════════════════════════ */
 
-function PanelHeader({ onClose, stats, llmAvailable }) {
+function PanelHeader({ onClose, stats, llmAvailable, onPopOut, isPopped, dragHandleProps }) {
   return (
-    <div style={{
-      padding: '10px 14px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      borderBottom: '1px solid rgba(255, 215, 0, 0.2)',
-      background: 'rgba(0,0,0,0.2)',
-    }}>
+    <div
+      {...(dragHandleProps || {})}
+      style={{
+        padding: '10px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottom: '1px solid rgba(255, 215, 0, 0.2)',
+        background: 'rgba(0,0,0,0.2)',
+        cursor: dragHandleProps ? 'grab' : 'default',
+        userSelect: 'none',
+      }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 16 }}>🧠</span>
         <span style={{
@@ -165,7 +169,17 @@ function PanelHeader({ onClose, stats, llmAvailable }) {
           }} />
         )}
       </div>
-      <button onClick={onClose} style={closeBtnStyle}>✕</button>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        {onPopOut && (
+          <button
+            onClick={onPopOut}
+            title={isPopped ? 'Dock panel' : 'Pop out to floating window'}
+            style={{ ...closeBtnStyle, fontSize: 12 }}>
+            {isPopped ? '⊟' : '⧉'}
+          </button>
+        )}
+        <button onClick={onClose} style={closeBtnStyle}>✕</button>
+      </div>
     </div>
   );
 }

@@ -213,7 +213,7 @@ const HOUSE_LAYOUT = {
   // --- Furniture / objects in each room ---
   furniture: [
     // ═══════════════════ Kitchen ═══════════════════
-    { id: 'fridge', label: 'Refrigerator', room: 'kitchen', position: { x: -9.3, y: 0, z: 6.3 }, size: { w: 1, h: 2, d: 0.8 }, color: '#C0C0C0' },
+    { id: 'fridge', label: 'Refrigerator', room: 'kitchen', position: { x: -9.3, y: 0, z: 6.3 }, size: { w: 1, h: 2, d: 0.8 }, color: '#C0C0C0', rotationY: Math.PI },
     { id: 'sink', label: 'Kitchen Sink', room: 'kitchen', position: { x: -7.5, y: 0, z: 6.3 }, size: { w: 1.2, h: 1, d: 0.6 }, color: '#A9A9A9' },
     { id: 'dishwasher', label: 'Dishwasher', room: 'kitchen', position: { x: -6.2, y: 0, z: 6.3 }, size: { w: 0.8, h: 1, d: 0.6 }, color: '#808080' },
     { id: 'stove', label: 'Stove', room: 'kitchen', position: { x: -4.8, y: 0, z: 6.3 }, size: { w: 0.8, h: 1, d: 0.6 }, color: '#2F4F4F' },

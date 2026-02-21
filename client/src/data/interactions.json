@@ -133,22 +133,27 @@
     },
     "kitchen_table": {
       "approachSide": "center",
+      "activityY": 0.55,
       "snapToNearest": [
         "kitchen_chair_1",
         "kitchen_chair_2"
       ]
     },
     "kitchen_chair_1": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.55
     },
     "kitchen_chair_2": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.55
     },
     "couch": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.5
     },
     "loveseat": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.48
     },
     "tv_stand": {
       "snapTo": "couch"
@@ -166,7 +171,8 @@
       "snapTo": "loveseat"
     },
     "master_bed": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.38
     },
     "nightstand_l": {
       "approachSide": "right",
@@ -185,10 +191,12 @@
       "standOffset": 0.6
     },
     "toilet": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.4
     },
     "shower": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0
     },
     "bath_sink": {
       "approachSide": "back",
@@ -197,6 +205,10 @@
     "bath_mirror": {
       "approachSide": "back",
       "standOffset": 0.5
+    },
+    "bath_mat": {
+      "approachSide": "center",
+      "activityY": 0
     },
     "washer": {
       "approachSide": "left",
@@ -239,30 +251,36 @@
       "standOffset": 0.5
     },
     "kids_bed_1": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.32
     },
     "kids_bed_2": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.32
     },
     "kids_bed_3": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.32
     },
     "toy_box": {
       "approachSide": "front",
       "standOffset": 0.5
     },
     "kids_desk_shared": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.45
     },
     "kids_desk_single": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.45
     },
     "kids_bookshelf": {
       "approachSide": "left",
       "standOffset": 0.5
     },
     "bean_bag": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.12
     },
     "car": {
       "approachSide": "right",
@@ -277,7 +295,8 @@
       "standOffset": 0.5
     },
     "bike": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.5
     },
     "lawn_mower": {
       "approachSide": "right",
@@ -328,51 +347,64 @@
       "standOffset": 0.6
     },
     "hot_tub": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.15
     },
     "picnic_table": {
       "approachSide": "front",
       "standOffset": 0.7
     },
     "swimming_pool": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": -0.15
     },
     "pool_chair_1": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.18
     },
     "pool_chair_2": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.18
     },
     "pool_diving_board": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.5
     },
     "swing_set": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.5
     },
     "slide": {
       "approachSide": "back",
       "standOffset": 0.6
     },
     "sandbox": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.05
     },
     "monkey_bars": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 1.2
     },
     "trampoline": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0.45
     },
     "soccer_ball": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0
     },
     "basketball": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0
     },
     "beach_ball": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0
     },
     "jump_rope": {
-      "approachSide": "center"
+      "approachSide": "center",
+      "activityY": 0
     },
     "garden_shed": {
       "approachSide": "front",
@@ -508,10 +540,7 @@
     "turn_on_lights": "stand_use",
     "turn_off_lights": "stand_use",
     "turn_off_lights_leaving": "stand_use",
-    "daydream": "stand_use",
-    "stretch_body": "stand_use",
-    "look_around_room": "stand_use",
-    "hum_song": "stand_use"
+    "towel_off": "stand_fold"
   },
   "interactions": [
     {
@@ -542,6 +571,10 @@
       },
       "skillEffects": {
         "cooking": 0.2
+      },
+      "followUp": {
+        "interactionId": "eat_at_table",
+        "chance": 0.85
       }
     },
     {
@@ -572,6 +605,10 @@
       },
       "skillEffects": {
         "cooking": 0.2
+      },
+      "followUp": {
+        "interactionId": "eat_at_table",
+        "chance": 0.85
       }
     },
     {
@@ -602,6 +639,10 @@
       },
       "skillEffects": {
         "cooking": 0.3
+      },
+      "followUp": {
+        "interactionId": "eat_at_table",
+        "chance": 0.9
       }
     },
     {
@@ -622,7 +663,8 @@
       "needsEffects": {
         "hunger": 3
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "chain": ["heat_food_microwave", "eat_at_table"]
     },
     {
       "id": "get_drink_fridge",
@@ -664,7 +706,12 @@
         "hunger": 15,
         "hydration": 5
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "followUp": {
+        "interactionId": "eat_at_table",
+        "chance": 0.7
+      },
+      "chain": ["get_snack_fridge", "heat_food_microwave", "eat_at_table"]
     },
     {
       "id": "get_pantry_item",
@@ -684,7 +731,8 @@
       "needsEffects": {
         "hunger": 10
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "chain": ["get_pantry_item", "heat_food_microwave", "eat_at_table"]
     },
     {
       "id": "wash_dishes_sink",
@@ -1241,7 +1289,12 @@
         "bladder": 100,
         "hygiene": -5
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "followUp": {
+        "interactionId": "wash_hands_bathroom",
+        "chance": 0.95
+      },
+      "chain": ["use_toilet", "wash_hands_bathroom"]
     },
     {
       "id": "take_shower",
@@ -1263,7 +1316,12 @@
         "comfort": 10,
         "energy": 5
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "followUp": {
+        "interactionId": "towel_off",
+        "chance": 1.0
+      },
+      "chain": ["take_shower", "towel_off", "wash_hands_bathroom"]
     },
     {
       "id": "morning_shower",
@@ -1288,7 +1346,12 @@
         "comfort": 10,
         "energy": 10
       },
-      "skillEffects": {}
+      "skillEffects": {},
+      "followUp": {
+        "interactionId": "towel_off",
+        "chance": 1.0
+      },
+      "chain": ["morning_shower", "towel_off", "wash_hands_bathroom"]
     },
     {
       "id": "wash_hands_bathroom",
@@ -1307,6 +1370,27 @@
       "description": "Wash hands at the bathroom sink.",
       "needsEffects": {
         "hygiene": 8
+      },
+      "skillEffects": {}
+    },
+    {
+      "id": "towel_off",
+      "furnitureId": "bath_mat",
+      "label": "Towel off",
+      "room": "bathroom",
+      "duration": {
+        "min": 2,
+        "max": 4
+      },
+      "timeWindow": null,
+      "eligibleRoles": null,
+      "animation": "use",
+      "category": "hygiene",
+      "priority": 1,
+      "description": "Step out of the shower and dry off with a towel.",
+      "needsEffects": {
+        "hygiene": 5,
+        "comfort": 5
       },
       "skillEffects": {}
     },
@@ -2437,8 +2521,8 @@
         "max": 30
       },
       "timeWindow": {
-        "start": 11,
-        "end": 20
+        "start": 16,
+        "end": 19.5
       },
       "eligibleRoles": [
         "father"
@@ -2496,7 +2580,10 @@
         "min": 15,
         "max": 45
       },
-      "timeWindow": null,
+      "timeWindow": {
+        "start": 19,
+        "end": 22
+      },
       "eligibleRoles": [
         "father",
         "mother"
@@ -2602,8 +2689,8 @@
         "max": 60
       },
       "timeWindow": {
-        "start": 8,
-        "end": 20
+        "start": 9,
+        "end": 19
       },
       "eligibleRoles": null,
       "animation": "use",
@@ -2617,6 +2704,10 @@
       },
       "skillEffects": {
         "fitness": 0.2
+      },
+      "followUp": {
+        "interactionId": "lounge_poolside_1",
+        "chance": 0.75
       }
     },
     {
@@ -2646,6 +2737,10 @@
       },
       "skillEffects": {
         "fitness": 0.4
+      },
+      "followUp": {
+        "interactionId": "lounge_poolside_2",
+        "chance": 0.8
       }
     },
     {
@@ -3098,8 +3193,8 @@
         "max": 60
       },
       "timeWindow": {
-        "start": 7,
-        "end": 18
+        "start": 8,
+        "end": 17
       },
       "eligibleRoles": [
         "father",

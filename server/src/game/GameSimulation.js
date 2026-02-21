@@ -12,6 +12,7 @@ const { createFamily, updateFamilyMember, commandFamilyMember, STATE } = require
 const { HOUSE_LAYOUT } = require('./HouseLayout');
 const AgenticEngine = require('./AgenticEngine');
 const { recordMemory } = require('./MemoryManager');
+const logger = require('./SimulationLogger');
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ class GameSimulation {
     this.roomLights = {};
     HOUSE_LAYOUT.rooms.forEach(r => { this.roomLights[r.id] = true; });
     this.roomLights._exterior = true;
-    this.lightsAuto = true;
+    this.lightsAuto = false; // Characters (via LLM lightAction) control all lights — no auto-management
 
     // ── Agentic AI engine ──
     this.agenticEngine = new AgenticEngine();
@@ -188,28 +189,37 @@ class GameSimulation {
 
       for (const roomId of Object.keys(this.roomLights)) {
         const occupied = (roomOccupancy[roomId] || 0) > 0;
+        const previousState = this.roomLights[roomId];
 
         if (isDaytime) {
           // During day: all lights off (natural light)
           if (this.roomLights[roomId] !== false) {
             this.roomLights[roomId] = false;
+            if (previousState !== false) {
+              logger.logLightChange({ room: roomId, newState: 'off', trigger: 'auto' });
+            }
           }
         } else {
           // At night: lights on in occupied rooms, off in empty rooms
           // Exception: hallway and porch stay on for safety
           const keepOn = roomId === 'hallway' || roomId === '_exterior';
           if (keepOn) {
-            this.roomLights[roomId] = true;
+            if (!this.roomLights[roomId]) {
+              this.roomLights[roomId] = true;
+              logger.logLightChange({ room: roomId, newState: 'on', trigger: 'auto' });
+            }
           } else if (occupied) {
             // Someone is in this room — turn on lights
             if (!this.roomLights[roomId]) {
               this.roomLights[roomId] = true;
+              logger.logLightChange({ room: roomId, newState: 'on', trigger: 'auto' });
             }
           } else {
             // No one in this room at night — turn off after a short delay
             // (instant for simulation purposes)
             if (this.roomLights[roomId]) {
               this.roomLights[roomId] = false;
+              logger.logLightChange({ room: roomId, newState: 'off', trigger: 'auto' });
             }
           }
         }
@@ -319,25 +329,33 @@ class GameSimulation {
   setSpeed(speed) {
     const allowed = [1, 10, 100, 1000];
     if (allowed.includes(speed)) {
+      const prev = this.gameSpeed;
       this.gameSpeed = speed;
       this.syncToReal = false;
+      logger.logSimControl({ action: 'speed_change', value: speed, previousValue: prev });
     }
   }
 
   /** Toggle pause */
   togglePause() {
     this.paused = !this.paused;
+    logger.logSimControl({ action: this.paused ? 'pause' : 'resume', value: this.paused });
   }
 
   /** Set pause state explicitly */
   setPaused(paused) {
+    const prev = this.paused;
     this.paused = !!paused;
+    if (prev !== this.paused) {
+      logger.logSimControl({ action: this.paused ? 'pause' : 'resume', value: this.paused });
+    }
   }
 
   /** Sync to real Eastern time */
   setSyncToReal(sync) {
     this.syncToReal = !!sync;
     if (sync) this.gameTime = getEasternTime();
+    logger.logSimControl({ action: 'sync_real', value: this.syncToReal });
   }
 
   /** Override the game hour (from time slider) */
@@ -346,6 +364,7 @@ class GameSimulation {
     const min = Math.floor((hour - h) * 60);
     this.gameTime.setHours(h, min, 0, 0);
     this.syncToReal = false;
+    logger.logSimControl({ action: 'time_override', value: hour });
   }
 
   /** Toggle a room's lights */
@@ -353,6 +372,7 @@ class GameSimulation {
     if (this.roomLights[roomId] !== undefined) {
       this.roomLights[roomId] = !this.roomLights[roomId];
       this.lightsAuto = false;
+      logger.logLightChange({ room: roomId, newState: this.roomLights[roomId] ? 'on' : 'off', trigger: 'player' });
     }
   }
 
@@ -362,11 +382,13 @@ class GameSimulation {
       this.roomLights[key] = !!on;
     }
     this.lightsAuto = false;
+    logger.logLightChange({ room: '_all', newState: on ? 'on' : 'off', trigger: 'player' });
   }
 
   /** Toggle auto-lights mode */
   toggleLightsAuto() {
     this.lightsAuto = !this.lightsAuto;
+    logger.logSimControl({ action: 'lights_auto', value: this.lightsAuto });
   }
 
   /** Enable/disable agentic AI */
@@ -439,6 +461,7 @@ class GameSimulation {
               parent.currentRoom, this.agenticEngine.personaStates, this.family
             );
             this._bedtimeAnnouncements[kid.name] = true;
+            logger.logBedtimeWake({ character: kid.name, action: 'bedtime_announced', gameHour, trigger: parent.name });
           }
         }
       }
@@ -484,6 +507,7 @@ class GameSimulation {
             this.agenticEngine.resolvedDecisions.delete(member.name);
           }
           this.family[i] = commandFamilyMember(this.family[i], sleepAction);
+          logger.logBedtimeWake({ character: member.name, action: 'bedtime_enforced', gameHour, trigger: 'forced_past_30min' });
           const personaState = this.agenticEngine.personaStates[member.name];
           if (personaState) {
             recordMemory(personaState, 'action', `Was sent to bed — past bedtime`, 'tired', { importance: 3 });
@@ -507,6 +531,7 @@ class GameSimulation {
       const sleepAction = sleepInteractions[member.name];
       if (sleepAction) {
         this.family[i] = commandFamilyMember(this.family[i], sleepAction);
+        logger.logBedtimeWake({ character: member.name, action: 'bedtime_enforced', gameHour, trigger: 'grace_idle' });
         // Add memory about going to bed
         const personaState = this.agenticEngine.personaStates[member.name];
         if (personaState) {
@@ -551,6 +576,9 @@ class GameSimulation {
           idleTimer: 0,
           idleDuration: 1,
         };
+
+        logger.logBedtimeWake({ character: member.name, action: 'woke_up', gameHour });
+        logger.logStateTransition({ character: member.name, from: 'performing', to: 'idle', reason: 'wake_up' });
 
         // Add wake memory
         const personaState = this.agenticEngine.personaStates[member.name];
@@ -657,6 +685,7 @@ class GameSimulation {
         const idx = this.family.findIndex(m => m.name === memberName);
         if (idx >= 0 && this.family[idx].state === 'thinking') {
           // Return to CHOOSING so the regular AI can pick
+          logger.logStateTransition({ character: memberName, from: 'thinking', to: 'choosing', reason: 'fallback' });
           this.family[idx] = { ...this.family[idx], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
         }
         // If still in CHOOSING, just leave it — regular AI will handle
@@ -667,6 +696,7 @@ class GameSimulation {
     for (let i = 0; i < this.family.length; i++) {
       const member = this.family[i];
       if (member.state === 'choosing' && this.agenticEngine.hasPendingDecision(member.name)) {
+        logger.logStateTransition({ character: member.name, from: 'choosing', to: 'thinking', reason: 'agentic_reasoning_start' });
         this.family[i] = {
           ...member,
           state: 'thinking',
@@ -701,18 +731,26 @@ class GameSimulation {
         const accepted = this.agenticEngine.applyDecision(member.name, resolved, this.family, this.roomLights);
         if (accepted === false) {
           // Anti-repetition or other guard rejected — fallback to regular AI
+          logger.logDecisionRejected({ character: member.name, action: resolved.action, reason: 'anti_repetition_guard' });
+          logger.logStateTransition({ character: member.name, from: 'thinking', to: 'choosing', reason: 'decision_rejected' });
           this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
           this.agenticEngine.stats.fallbackDecisions++;
         } else {
           // If character was interrupted from PERFORMING and the conversation pipeline
           // chose the SAME action they were already doing, restore them to PERFORMING
           // without restarting the activity timer. This preserves activity continuity.
+          //
+          // ALSO: if the character has remaining plan steps (activityPlan.length > 0),
+          // ALWAYS restore to PERFORMING — don't let a conversation interrupt break a chain.
+          // The character can still speak but won't abandon their current plan step.
           const wasPerforming = member.currentInteraction?.id && 
-            resolved.action === member.currentInteraction.id &&
-            member.interactionTimer > 0;
+            member.interactionTimer > 0 &&
+            (resolved.action === member.currentInteraction.id ||
+             (Array.isArray(member.activityPlan) && member.activityPlan.length > 0));
           
           if (wasPerforming) {
             // Restore to performing — keep interaction state, just update activity label
+            logger.logStateTransition({ character: member.name, from: 'thinking', to: 'performing', reason: 'resume_activity' });
             this.family[i] = {
               ...member,
               state: 'performing',
@@ -720,13 +758,16 @@ class GameSimulation {
               _thinkingRealStart: null,
             };
           } else if (resolved.isCreatedAction && resolved.createdActionData) {
-            this.family[i] = commandFamilyMember(this.family[i], resolved.action, resolved.createdActionData);
+            logger.logStateTransition({ character: member.name, from: 'thinking', to: 'walking', reason: `agentic_decision:${resolved.action}` });
+            this.family[i] = commandFamilyMember(this.family[i], resolved.action, resolved.createdActionData, resolved.plan);
           } else {
-            this.family[i] = commandFamilyMember(this.family[i], resolved.action);
+            logger.logStateTransition({ character: member.name, from: 'thinking', to: 'walking', reason: `agentic_decision:${resolved.action}` });
+            this.family[i] = commandFamilyMember(this.family[i], resolved.action, null, resolved.plan);
           }
         }
       } else {
         // No valid decision — return to CHOOSING for regular AI fallback
+        logger.logStateTransition({ character: member.name, from: 'thinking', to: 'choosing', reason: 'no_valid_decision' });
         this.family[i] = { ...this.family[i], state: 'choosing', activityLabel: null, _thinkingRealStart: null };
         this.agenticEngine.stats.fallbackDecisions++;
         // Clear conversation state so we don't keep retrying failed responses

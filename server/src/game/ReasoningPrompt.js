@@ -262,15 +262,30 @@ CONVERSATION RULES:
 - Have natural conversations — ask questions, react, be authentic.
 - Express YOUR personality through how you speak!
 
-LIGHT RULES:
-- Set lightAction to "on" if the room is dark and you need light.
-- Set lightAction to "off" if you're the LAST person leaving.
+LIGHT RULES (YOU control all lights — there is NO automatic lighting):
+- Set lightAction to "on" if the room is dark and you need light to do anything.
+- Set lightAction to "off" if you're the LAST person leaving a room.
 - Otherwise set lightAction to null.
+- Do NOT leave dark rooms without turning a light on first.
+
+ACTIVITY PLAN RULES:
+- For complex activities (cooking, cleaning, morning routine, getting snack, etc.), use "plan" to sequence 2-6 sub-steps.
+- Each plan step is an action_id you'll execute in order. You walk to each location automatically.
+- The first element of "plan" MUST match "action" (your current first step).
+- Plan steps can span multiple rooms — just list them in the order you'd naturally do them.
+- EXAMPLES:
+  - Getting a snack: ["get_snack_fridge", "use_kitchen_counter", "eat_at_table"]
+  - Morning routine: ["morning_shower", "use_bathroom_sink", "get_dressed"]
+  - Full cooking: ["use_kitchen_stove", "use_kitchen_counter", "set_table", "eat_at_table", "clear_table"]
+  - After toilet: ["use_toilet", "wash_hands_bathroom"]
+- For simple single activities (watch TV, read, sleep), omit "plan" or set it to null.
+- Keep plan steps realistic — things you'd ACTUALLY do in that order.
 
 Respond with ONLY this JSON (no other text):
 {
   "thought": "2-3 sentence internal reasoning — think as yourself",
   "action": "interaction_id from the list above (JUST the id)",
+  "plan": ["step1_id", "step2_id", "step3_id"] or null,
   "speech": "what you say out loud, or null if silent",
   "speechTarget": "name of person you're addressing, or null",
   "emotion": "current emotion word",
@@ -662,9 +677,38 @@ function parseDecision(rawResponse, availableInteractions) {
     // Validate the action is a real interaction
     const validAction = availableInteractions.some(i => i.id === actionId);
 
+    // ── Parse and validate activity plan ──
+    // Plan steps can reference interactions from any room (the character will path to them).
+    // We validate each step against a broader INTERACTION_MAP if available.
+    let plan = null;
+    if (Array.isArray(parsed.plan) && parsed.plan.length > 1) {
+      // Build a set of all known interaction IDs (available list + any extras we can tolerate)
+      const availableIds = new Set(availableInteractions.map(i => i.id));
+      const validatedPlan = parsed.plan
+        .map(step => {
+          if (!step) return null;
+          let stepId = String(step).trim().replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '');
+          if (stepId.includes(' — ') || stepId.includes(' - ')) {
+            stepId = stepId.split(/\s[—-]\s/)[0].trim();
+          }
+          return stepId;
+        })
+        .filter(id => id && /^[a-z0-9_]+$/.test(id)); // Only allow valid ID-format strings
+
+      if (validatedPlan.length > 1) {
+        // First step should match action, but don't require it strictly — just use it
+        plan = validatedPlan;
+        // Ensure first step matches the resolved action
+        if (validAction && plan[0] !== actionId) {
+          plan = [actionId, ...plan.filter(id => id !== actionId)];
+        }
+      }
+    }
+
     return {
       thought: String(parsed.thought || 'No reasoning provided.'),
       action: validAction ? actionId : null,
+      plan: plan,
       speech: parsed.speech && parsed.speech !== 'null' ? String(parsed.speech).substring(0, 200) : null,
       speechTarget: parsed.speechTarget && parsed.speechTarget !== 'null' ? String(parsed.speechTarget) : null,
       emotion: String(parsed.emotion || 'neutral'),

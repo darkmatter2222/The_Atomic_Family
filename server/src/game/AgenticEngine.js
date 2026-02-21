@@ -375,6 +375,7 @@ class AgenticEngine {
       const recent = personaState.recentInteractions?.slice(-1) || [];
       if (recent.length >= 1 && recent[0] === decision.action && !decision.isCreatedAction) {
         console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" 2nd time in a row — rejected, forcing variety`);
+        logger.logDecisionRejected({ character: memberName, action: decision.action, reason: 'anti_repetition_same_action', details: `repeated:${recent[0]}` });
         personaState.lastThought = decision.thought;
         this.socialEngine.markResponded(memberName);
         return false; // Tell GameSimulation to use fallback instead
@@ -402,6 +403,7 @@ class AgenticEngine {
           const decisionCat = getCategoryKey(decision.action);
           if (recentCats.every(c => c === decisionCat)) {
             console.log(`[AgenticEngine] ${memberName} tried "${decision.action}" — 4th "${decisionCat}" in a row — rejected, forcing variety`);
+            logger.logDecisionRejected({ character: memberName, action: decision.action, reason: 'anti_repetition_category', details: `category:${decisionCat} recent:[${recentThree.join(',')}]` });
             personaState.lastThought = decision.thought;
             this.socialEngine.markResponded(memberName);
             return false;
@@ -449,6 +451,7 @@ class AgenticEngine {
         // If leaving the room (go_to_*), suppress speech — you're about to walk away
         if (decision.action && decision.action.startsWith('go_to_')) {
           console.log(`[AgenticEngine] ${memberName} suppressed speech — leaving room (${decision.action})`);
+          logger.logSpeechSuppressed({ character: memberName, reason: 'navigation_departure', target: decision.speechTarget, room, speechSnippet: decision.speech ? decision.speech.substring(0, 80) : null });
           decision.speech = null;
           decision.speechTarget = null;
         }
@@ -461,6 +464,7 @@ class AgenticEngine {
         );
         if (othersInRoom.length === 0 && decision.speechTarget) {
           console.log(`[AgenticEngine] ${memberName} tried to talk but is alone in ${room} — suppressed`);
+          logger.logSpeechSuppressed({ character: memberName, reason: 'alone_in_room', target: decision.speechTarget, room, speechSnippet: decision.speech ? decision.speech.substring(0, 80) : null });
           decision.speech = null;
           decision.speechTarget = null;
         }
@@ -472,6 +476,7 @@ class AgenticEngine {
         );
         if (sleepersInRoom.length > 0) {
           console.log(`[AgenticEngine] ${memberName} suppressed speech in ${room} — ${sleepersInRoom.map(m => m.name).join(', ')} sleeping`);
+          logger.logSpeechSuppressed({ character: memberName, reason: 'sleeping_room', target: decision.speechTarget, room, speechSnippet: decision.speech ? decision.speech.substring(0, 80) : null, details: `sleepers:${sleepersInRoom.map(m => m.name).join(',')}` });
           decision.speech = null;
           decision.speechTarget = null;
         }
@@ -486,6 +491,7 @@ class AgenticEngine {
           const targetMember = family.find(m => m.name === resolvedTarget);
           if (targetMember && targetMember.currentRoom !== room) {
             console.log(`[AgenticEngine] ${memberName} tried to talk to ${resolvedTarget} in ${targetMember.currentRoom} from ${room} — stripped target`);
+            logger.logSpeechSuppressed({ character: memberName, reason: 'cross_room_target', target: resolvedTarget, room, speechSnippet: decision.speech ? decision.speech.substring(0, 80) : null, details: `target_in:${targetMember.currentRoom}` });
             resolvedTarget = null;
             // Keep the speech as a general statement, just remove the target
           }
@@ -494,6 +500,7 @@ class AgenticEngine {
           // Don't start new conversations with someone we just finished talking to
           if (resolvedTarget && this.socialEngine.isPairOnCooldown(memberName, resolvedTarget)) {
             console.log(`[AgenticEngine] ${memberName} tried to talk to ${resolvedTarget} but pair is on cooldown — stripped target`);
+            logger.logSpeechSuppressed({ character: memberName, reason: 'conversation_cooldown', target: resolvedTarget, room, speechSnippet: decision.speech ? decision.speech.substring(0, 80) : null });
             resolvedTarget = null;
           }
         }
@@ -507,6 +514,7 @@ class AgenticEngine {
           const isDupeSpeech = this.recentSpeechTexts.some(s => s.text === normalizedSpeech);
           if (isDupeSpeech) {
             console.log(`[AgenticEngine] ${memberName} suppressed duplicate speech: "${decision.speech.substring(0, 50)}..."`);
+            logger.logSpeechSuppressed({ character: memberName, reason: 'duplicate_speech', target: resolvedTarget, room, speechSnippet: decision.speech.substring(0, 80) });
             decision.speech = null;
             decision.speechTarget = null;
             resolvedTarget = null;
@@ -581,9 +589,11 @@ class AgenticEngine {
           const currentRoom = member.currentRoom;
           if (decision.lightAction === 'on' && roomLights[currentRoom] === false) {
             roomLights[currentRoom] = true;
+            logger.logLightChange({ room: currentRoom, newState: true, trigger: 'character', character: memberName });
             recordMemory(personaState, 'action', `Turned on the light in ${currentRoom}`, 'neutral', { location: currentRoom, importance: 1 });
           } else if (decision.lightAction === 'off' && roomLights[currentRoom] === true) {
             roomLights[currentRoom] = false;
+            logger.logLightChange({ room: currentRoom, newState: false, trigger: 'character', character: memberName });
             recordMemory(personaState, 'action', `Turned off the light in ${currentRoom}`, 'neutral', { location: currentRoom, importance: 1 });
           }
         }

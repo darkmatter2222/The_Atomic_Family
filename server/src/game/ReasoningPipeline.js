@@ -495,10 +495,23 @@ PEOPLE IN MY ROOM: ${peopleInRoom.length > 0 ? peopleInRoom.map(p => p.name).joi
 
 LIGHTS: ${lightContext}
 
+ACTIVITY PLAN RULES:
+- For multi-step activities (getting a snack, cooking, morning routine, cleaning up), set "plan" to an ordered list of 2-5 action_ids.
+- The first "plan" element MUST match "action" exactly.
+- Plan steps can involve different rooms — you will automatically walk to each one.
+- Examples:
+  - Getting a snack: ["get_snack_fridge", "use_kitchen_counter", "eat_at_table"]
+  - After toilet: ["use_toilet", "wash_hands_bathroom"]
+  - Morning routine: ["morning_shower", "use_bathroom_sink", "get_dressed"]
+  - Full cooking: ["use_kitchen_stove", "use_kitchen_counter", "eat_at_table"]
+- For a single simple activity (watching TV, reading, sleeping), set "plan" to null.
+- Use ONLY valid action_ids from the AVAILABLE ACTIONS list above.
+
 Output ONLY this JSON:
 {
   "thought": "2-3 sentence summary of your complete reasoning chain",
   "action": "exact_action_id OR createAction(\\"description\\")",
+  "plan": ["action_id_1", "action_id_2"] or null,
   "details": "freeform description of what you're actually doing — be specific and in-character",
   "speech": "what you say out loud, or null",
   "speechTarget": "name of person, or null",
@@ -1103,6 +1116,18 @@ A hug from Mommy can fix everything. You ask "why?" because you genuinely want t
         }
       }
 
+      // ── Parse activity plan ──
+      // Validate each step ID — must be a simple snake_case string, not a navigation action
+      let plan = null;
+      if (Array.isArray(parsed.plan) && parsed.plan.length > 1) {
+        const validatedSteps = parsed.plan
+          .map(s => (typeof s === 'string' ? s.trim() : null))
+          .filter(s => s && /^[a-z][a-z0-9_]*$/.test(s) && !s.startsWith('go_to_'));
+        if (validatedSteps.length > 1) {
+          plan = validatedSteps;
+        }
+      }
+
       if (isCreatedAction) {
         // Created action — classify and return as special result
         const { classifyCreatedAction } = require('./ActionClassifier');
@@ -1111,6 +1136,7 @@ A hug from Mommy can fix everything. You ask "why?" because you genuinely want t
         return {
           thought: String(parsed.thought || 'No reasoning provided.'),
           action: classified.id,
+          plan: null, // created actions don't support multi-step plans
           isCreatedAction: true,
           actionDescription,
           createdActionData: classified,
@@ -1148,9 +1174,16 @@ A hug from Mommy can fix everything. You ask "why?" because you genuinely want t
 
       const validAction = availableInteractions.some(i => i.id === actionId);
 
+      // If plan provided, ensure first step matches resolved action
+      if (plan && plan[0] !== actionId) {
+        // Mismatched first step — drop plan to avoid confusion
+        plan = null;
+      }
+
       return {
         thought: String(parsed.thought || 'No reasoning provided.'),
         action: validAction ? actionId : null,
+        plan: validAction ? plan : null,
         details: parsed.details ? String(parsed.details).substring(0, 300) : null,
         speech: parsed.speech && parsed.speech !== 'null' && parsed.speech !== 'None'
           ? String(parsed.speech).substring(0, 200) : null,

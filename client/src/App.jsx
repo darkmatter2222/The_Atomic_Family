@@ -346,19 +346,6 @@ export default function App() {
   const [cameraLockOrientation, setCameraLockOrientation] = useState(false);
   const [firstPerson, setFirstPerson] = useState(false);
 
-  // Panel visibility (super menu)
-  const [panelVis, setPanelVis] = useState({
-    lightSwitches: true,
-    controls: true,
-    timeHud: true,
-    roomLegend: true,
-    sidePane: true,
-  });
-  const [superMenuOpen, setSuperMenuOpen] = useState(false);
-  const togglePanel = useCallback((key) => {
-    setPanelVis(prev => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-
   // Simulation / time-of-day state — driven by server via Socket.IO
   const [simPaused, setSimPaused] = useState(false);
   const [timeSpeed, setTimeSpeed] = useState(1);
@@ -377,14 +364,17 @@ export default function App() {
     initial._exterior = true;
     return initial;
   });
-  const [lightsAuto, setLightsAuto] = useState(true);
+  const [lightsAuto, setLightsAuto] = useState(false);
 
   // Agentic AI state — conversations, persona data, speech
   const [agenticState, setAgenticState] = useState(null);
   const [showConversations, setShowConversations] = useState(false);
+  const [dashboardPopped, setDashboardPopped] = useState(false);
+  const [poppedPos, setPoppedPos] = useState({ x: 20, y: 20 });
   const [selectedThought, setSelectedThought] = useState(null);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
+  const dragRef = useRef(null);
 
   // ── Socket.IO: receive authoritative state from server ──
   useEffect(() => {
@@ -522,6 +512,27 @@ export default function App() {
     socket.emit('setAgenticEnabled', newState);
   }, [agenticState?.enabled]);
   const handleToggleConversations = useCallback(() => setShowConversations(p => !p), []);
+  const handlePopOutDashboard = useCallback(() => {
+    setDashboardPopped(p => !p);
+    setPoppedPos({ x: 20, y: 20 });
+  }, []);
+  const handleDashboardDragStart = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX - poppedPos.x;
+    const startY = e.clientY - poppedPos.y;
+    const onMove = (me) => {
+      setPoppedPos({
+        x: Math.max(0, Math.min(window.innerWidth - 400, me.clientX - startX)),
+        y: Math.max(0, Math.min(window.innerHeight - 100, me.clientY - startY)),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [poppedPos]);
   const handleThoughtClick = useCallback((thoughtId) => {
     if (!thoughtId) return;
     setModalLoading(true);
@@ -596,50 +607,26 @@ export default function App() {
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      {/* Title overlay with hamburger super menu */}
+      {/* ─── Title Bar ─── */}
       <div style={{
-        position: 'absolute',
-        top: 20,
-        left: 20,
-        zIndex: 20,
-        color: '#FFD700',
-        fontFamily: '"Courier New", monospace',
-        textShadow: '2px 2px 4px rgba(0,0,0,0.8)'
+        position: 'absolute', top: 14, left: 16, zIndex: 20,
+        display: 'flex', alignItems: 'center', gap: 10,
+        pointerEvents: 'none',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Hamburger button */}
-          <button
-            onClick={() => setSuperMenuOpen(p => !p)}
-            style={{
-              background: superMenuOpen ? 'rgba(255,215,0,0.2)' : 'rgba(0,0,0,0.6)',
-              border: superMenuOpen ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.2)',
-              borderRadius: 6,
-              padding: '6px 8px',
-              cursor: 'pointer',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 3,
-              transition: 'all 0.15s ease',
-            }}
-            title="Toggle panels"
-          >
-            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
-            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
-            <span style={{ display: 'block', width: 18, height: 2, background: superMenuOpen ? '#FFD700' : '#ccc', borderRadius: 1, transition: 'background 0.15s' }} />
-          </button>
-          <div>
-            <h1 style={{ fontSize: '28px', margin: 0, letterSpacing: '2px' }}>
-              THE ATOMIC FAMILY
-            </h1>
-            <p style={{ fontSize: '12px', color: '#aaa', marginTop: 4, margin: 0 }}>
-              Pixel Craft Simulation | Orbit: Drag | Zoom: Scroll | FP: WASD
-            </p>
-          </div>
-        </div>
-
-        {/* Super menu dropdown */}
-        {superMenuOpen && (
-          <SuperMenuDropdown panelVis={panelVis} onToggle={togglePanel} />
+        <h1 style={{
+          fontSize: 20, margin: 0, letterSpacing: 3,
+          color: '#FFD700', fontFamily: '"Courier New", monospace',
+          textShadow: '1px 1px 6px rgba(0,0,0,0.9)',
+        }}>
+          THE ATOMIC FAMILY
+        </h1>
+        {agenticState?.llmAvailable === false && agenticState?.enabled && (
+          <span style={{
+            padding: '3px 8px', borderRadius: 4, fontSize: 9,
+            background: 'rgba(244,67,54,0.2)', border: '1px solid rgba(244,67,54,0.4)',
+            color: '#F44336', fontFamily: '"Courier New", monospace',
+            pointerEvents: 'auto',
+          }}>⚠ LLM Offline</span>
         )}
       </div>
 
@@ -649,17 +636,9 @@ export default function App() {
       {/* Furniture tooltip */}
       <FurnitureTooltip furniture={hoveredFurniture} />
 
-      {/* Room legend */}
-      {panelVis.roomLegend && <RoomLegend hoveredRoom={hoveredRoom} />}
-
       <Canvas
         shadows
-        camera={{
-          position: [18, 16, 20],
-          fov: 50,
-          near: 0.1,
-          far: 150
-        }}
+        camera={{ position: [18, 16, 20], fov: 50, near: 0.1, far: 150 }}
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
         onCreated={({ gl }) => {
           gl.shadowMap.enabled = true;
@@ -685,10 +664,7 @@ export default function App() {
           activeSpeech={activeSpeech}
         />
         {firstPerson ? (
-          <FirstPersonController
-            active={firstPerson}
-            spawnPosition={cameraFollowTarget || { x: 0, z: 2 }}
-          />
+          <FirstPersonController active={firstPerson} spawnPosition={cameraFollowTarget || { x: 0, z: 2 }} />
         ) : (
           <CameraController followTarget={cameraFollowTarget} autoRotate={cameraAutoRotate} topDown={cameraTopDown} lockOrientation={cameraLockOrientation} recenter={recenterCounter} />
         )}
@@ -696,146 +672,98 @@ export default function App() {
 
       {/* FP mode crosshair */}
       {firstPerson && (
-        <div style={{
-          position: 'absolute', top: '50%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          zIndex: 20, pointerEvents: 'none'
-        }}>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 20, pointerEvents: 'none' }}>
           <div style={{ width: 20, height: 2, background: 'rgba(255,255,255,0.5)', position: 'absolute', top: -1, left: -10 }} />
           <div style={{ width: 2, height: 20, background: 'rgba(255,255,255,0.5)', position: 'absolute', top: -10, left: -1 }} />
         </div>
       )}
-
-      {/* FP mode hint */}
       {firstPerson && (
         <div style={{
-          position: 'absolute', top: 70, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: 50, left: '50%', transform: 'translateX(-50%)',
           zIndex: 20, pointerEvents: 'none',
           color: '#aaa', fontFamily: '"Courier New", monospace', fontSize: 11,
-          background: 'rgba(0,0,0,0.6)', borderRadius: 6, padding: '4px 14px'
+          background: 'rgba(0,0,0,0.6)', borderRadius: 6, padding: '4px 14px',
         }}>
-          WASD to move | Shift to run | Click to lock mouse | ESC to unlock
+          WASD to move · Shift to run · Click to lock · ESC to unlock
         </div>
       )}
 
-      {/* Time-of-day HUD (top right) */}
-      {panelVis.timeHud && (
-        <TimeHUD
-          gameTime={gameTime}
-          timeSpeed={timeSpeed}
-          syncToReal={syncToReal}
-          paused={simPaused}
-          onSetTimeSpeed={handleSetTimeSpeed}
-          onToggleSyncReal={handleToggleSyncReal}
-          onSetHour={handleSetHour}
-          onTogglePaused={handleTogglePaused}
-        />
-      )}
+      {/* ─── Unified Control Dock ─── */}
+      <ControlDock
+        gameTime={gameTime}
+        timeSpeed={timeSpeed}
+        syncToReal={syncToReal}
+        paused={simPaused}
+        onSetTimeSpeed={handleSetTimeSpeed}
+        onToggleSyncReal={handleToggleSyncReal}
+        onSetHour={handleSetHour}
+        onTogglePaused={handleTogglePaused}
+        roomLights={roomLights}
+        onToggleLight={toggleRoomLight}
+        onAllLightsOn={handleAllLightsOn}
+        onAllLightsOff={handleAllLightsOff}
+        lightsAuto={lightsAuto}
+        onToggleLightsAuto={handleToggleLightsAuto}
+        visibility={visibility}
+        onToggleVisibility={toggleVisibility}
+        cameraAutoRotate={cameraAutoRotate}
+        onToggleAutoRotate={handleToggleAutoRotate}
+        cameraTopDown={cameraTopDown}
+        onToggleTopDown={handleToggleTopDown}
+        cameraLockOrientation={cameraLockOrientation}
+        onToggleLockOrientation={handleToggleLockOrientation}
+        firstPerson={firstPerson}
+        onToggleFirstPerson={handleToggleFirstPerson}
+        autoCycleEnabled={autoCycleEnabled}
+        onToggleAutoCycle={handleToggleAutoCycle}
+        autoCycleInterval={autoCycleInterval}
+        autoCycleIntervals={AUTO_CYCLE_INTERVALS}
+        onSetAutoCycleInterval={setAutoCycleInterval}
+        agenticState={agenticState}
+        onToggleAgentic={handleToggleAgentic}
+        showConversations={showConversations}
+        onToggleConversations={handleToggleConversations}
+        hoveredRoom={hoveredRoom}
+      />
 
-      {/* Light switches panel */}
-      {panelVis.lightSwitches && (
-        <LightSwitchPanel
-          roomLights={roomLights}
-          onToggle={toggleRoomLight}
-          onAllOn={handleAllLightsOn}
-          onAllOff={handleAllLightsOff}
-          lightsAuto={lightsAuto}
-          onToggleAuto={handleToggleLightsAuto}
-        />
-      )}
-
-      {/* Controls panel */}
-      {panelVis.controls && (
-        <ControlsPanel
-          visibility={visibility}
-          onToggleVisibility={toggleVisibility}
-          cameraAutoRotate={cameraAutoRotate}
-          onToggleAutoRotate={handleToggleAutoRotate}
-          cameraTopDown={cameraTopDown}
-          onToggleTopDown={handleToggleTopDown}
-          cameraLockOrientation={cameraLockOrientation}
-          onToggleLockOrientation={handleToggleLockOrientation}
-          firstPerson={firstPerson}
-          onToggleFirstPerson={handleToggleFirstPerson}
-          autoCycleEnabled={autoCycleEnabled}
-          onToggleAutoCycle={handleToggleAutoCycle}
-          autoCycleInterval={autoCycleInterval}
-          autoCycleIntervals={AUTO_CYCLE_INTERVALS}
-          onSetAutoCycleInterval={setAutoCycleInterval}
-        />
-      )}
-
-      {/* Agentic AI toggle button (top area, left side, below title) */}
-      <div style={{
-        position: 'absolute',
-        top: 75,
-        left: showConversations ? 420 : 20,
-        zIndex: 20,
-        display: 'flex',
-        gap: 6,
-        transition: 'left 0.25s ease',
-      }}>
-        <button
-          onClick={handleToggleAgentic}
-          style={{
-            padding: '6px 12px',
-            borderRadius: 6,
-            fontFamily: '"Courier New", monospace',
-            fontSize: 11,
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            background: agenticState?.enabled ? 'rgba(76,175,80,0.2)' : 'rgba(0,0,0,0.6)',
-            border: agenticState?.enabled ? '1px solid rgba(76,175,80,0.5)' : '1px solid rgba(255,255,255,0.15)',
-            color: agenticState?.enabled ? '#4CAF50' : '#888',
-            transition: 'all 0.15s ease',
-          }}
-        >
-          🤖 AI {agenticState?.enabled ? 'ON' : 'OFF'}
-        </button>
-        <button
-          onClick={handleToggleConversations}
-          style={{
-            padding: '6px 12px',
-            borderRadius: 6,
-            fontFamily: '"Courier New", monospace',
-            fontSize: 11,
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            background: showConversations ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.6)',
-            border: showConversations ? '1px solid rgba(255,215,0,0.4)' : '1px solid rgba(255,255,255,0.15)',
-            color: showConversations ? '#FFD700' : '#888',
-            transition: 'all 0.15s ease',
-          }}
-        >
-          🧠 Dashboard
-        </button>
-        {agenticState?.llmAvailable === false && agenticState?.enabled && (
-          <span style={{
-            padding: '6px 10px',
-            borderRadius: 6,
-            fontSize: 10,
-            background: 'rgba(244,67,54,0.15)',
-            border: '1px solid rgba(244,67,54,0.3)',
-            color: '#F44336',
-            fontFamily: '"Courier New", monospace',
-          }}>
-            ⚠ LLM Offline
-          </span>
-        )}
-      </div>
-
-      {/* AI Dashboard (full-height left pane) */}
-      {showConversations && (
+      {/* AI Dashboard — flyout (docked left) or draggable floating window */}
+      {showConversations && !dashboardPopped && (
         <ConversationViewer
           agenticState={agenticState}
           selectedCharacter={selectedPlayerName}
           onClose={handleToggleConversations}
           onThoughtClick={handleThoughtClick}
           onConversationClick={handleConversationClick}
+          onPopOut={handlePopOutDashboard}
+          isPopped={false}
+        />
+      )}
+      {showConversations && dashboardPopped && (
+        <ConversationViewer
+          agenticState={agenticState}
+          selectedCharacter={selectedPlayerName}
+          onClose={handleToggleConversations}
+          onThoughtClick={handleThoughtClick}
+          onConversationClick={handleConversationClick}
+          onPopOut={handlePopOutDashboard}
+          isPopped={true}
+          dragHandleProps={{ onMouseDown: handleDashboardDragStart }}
+          style={{
+            position: 'fixed',
+            top: poppedPos.y,
+            left: poppedPos.x,
+            bottom: 'auto',
+            width: 400,
+            height: 580,
+            zIndex: 9000,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+            resize: 'both',
+            overflow: 'hidden',
+          }}
         />
       )}
 
-      {/* Modals — rendered via React portals to guarantee z-index stacking above everything */}
+      {/* Modals */}
       {modalLoading && ReactDOM.createPortal(
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -851,158 +779,449 @@ export default function App() {
         document.body
       )}
       {selectedThought && ReactDOM.createPortal(
-        <ThoughtDetailModal
-          thought={selectedThought}
-          onClose={handleCloseThoughtModal}
-        />,
+        <ThoughtDetailModal thought={selectedThought} onClose={handleCloseThoughtModal} />,
         document.body
       )}
       {selectedConversation && ReactDOM.createPortal(
-        <ConversationDetailModal
-          thread={selectedConversation}
-          onClose={handleCloseConversationModal}
-        />,
+        <ConversationDetailModal thread={selectedConversation} onClose={handleCloseConversationModal} />,
         document.body
       )}
 
       {/* Side Pane */}
-      {panelVis.sidePane && (
-        <SidePane
-          data={sidePaneData}
-          onClose={handleCloseSidePane}
-          onCommandAction={handleCommandAction}
-        />
-      )}
+      <SidePane
+        data={sidePaneData}
+        onClose={handleCloseSidePane}
+        onCommandAction={handleCommandAction}
+      />
     </div>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════
- *  SuperMenuDropdown – hamburger panel-visibility toggles
+ *  ControlDock — Unified bottom toolbar with expandable flyouts
+ *  Replaces: TimeHUD, LightSwitchPanel, ControlsPanel, RoomLegend,
+ *            SuperMenuDropdown, AI toggle buttons
  * ════════════════════════════════════════════════════════════════ */
 
-const PANEL_ITEMS = [
-  { key: 'timeHud',       label: 'Time HUD',       icon: '[T]' },
-  { key: 'lightSwitches', label: 'Light Switches',  icon: '[L]' },
-  { key: 'controls',      label: 'Controls',        icon: '[C]' },
-  { key: 'roomLegend',    label: 'Room Legend',      icon: '[R]' },
-  { key: 'sidePane',      label: 'Side Pane',       icon: '[S]' },
+const ROOM_LIGHT_LABELS = [
+  { id: 'living_room', label: 'Living Room', icon: '🛋' },
+  { id: 'kitchen', label: 'Kitchen', icon: '🍳' },
+  { id: 'hallway', label: 'Hallway', icon: '🚪' },
+  { id: 'bedroom_master', label: 'Master Bed', icon: '🛏' },
+  { id: 'bathroom', label: 'Bathroom', icon: '🛁' },
+  { id: 'laundry', label: 'Laundry', icon: '🧺' },
+  { id: 'bedroom_kids_shared', label: 'Kids Shared', icon: '🧸' },
+  { id: 'bedroom_kids_single', label: 'Kids Room', icon: '🎨' },
+  { id: 'garage', label: 'Garage', icon: '🚗' },
+  { id: 'closet_master', label: 'Master Closet', icon: '👔' },
+  { id: 'closet_kids', label: 'Kids Closet', icon: '👗' },
+  { id: '_exterior', label: 'Exterior', icon: '🏠' },
 ];
 
-function SuperMenuDropdown({ panelVis, onToggle }) {
-  const allVisible = Object.values(panelVis).every(Boolean);
-  const noneVisible = Object.values(panelVis).every(v => !v);
+const ROOM_LEGEND_DATA = [
+  { id: 'living_room', name: 'Living Room', color: '#8B7355' },
+  { id: 'kitchen', name: 'Kitchen', color: '#D2B48C' },
+  { id: 'bedroom_master', name: 'Master Bedroom', color: '#6B8E23' },
+  { id: 'bedroom_kids_shared', name: 'Shared Kids Room', color: '#4682B4' },
+  { id: 'bedroom_kids_single', name: 'Kids Room', color: '#5B9BD5' },
+  { id: 'bathroom', name: 'Bathroom', color: '#B0C4DE' },
+  { id: 'laundry', name: 'Laundry Room', color: '#C4AEAD' },
+  { id: 'hallway', name: 'Hallway', color: '#A0522D' },
+  { id: 'garage', name: 'Garage', color: '#808080' },
+  { id: 'closet_master', name: 'Master Closet', color: '#B8A88A' },
+  { id: 'closet_kids', name: 'Kids Closet', color: '#C9A6D8' },
+  { id: 'backyard', name: 'Backyard', color: '#5dba6a' },
+];
 
-  const toggleAll = (on) => {
-    PANEL_ITEMS.forEach(p => {
-      if (panelVis[p.key] !== on) onToggle(p.key);
-    });
-  };
+function ControlDock({
+  // Time
+  gameTime, timeSpeed, syncToReal, paused,
+  onSetTimeSpeed, onToggleSyncReal, onSetHour, onTogglePaused,
+  // Lights
+  roomLights, onToggleLight, onAllLightsOn, onAllLightsOff, lightsAuto, onToggleLightsAuto,
+  // Camera
+  visibility, onToggleVisibility,
+  cameraAutoRotate, onToggleAutoRotate,
+  cameraTopDown, onToggleTopDown,
+  cameraLockOrientation, onToggleLockOrientation,
+  firstPerson, onToggleFirstPerson,
+  autoCycleEnabled, onToggleAutoCycle,
+  autoCycleInterval, autoCycleIntervals, onSetAutoCycleInterval,
+  // AI
+  agenticState, onToggleAgentic, showConversations, onToggleConversations,
+  // Rooms
+  hoveredRoom,
+}) {
+  const [openFlyout, setOpenFlyout] = useState(null);
+  const dockRef = useRef(null);
+
+  const toggle = useCallback((id) => setOpenFlyout(prev => prev === id ? null : id), []);
+
+  // Close flyout on Escape or click outside
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') setOpenFlyout(null); };
+    const handleClick = (e) => {
+      if (dockRef.current && !dockRef.current.contains(e.target)) setOpenFlyout(null);
+    };
+    window.addEventListener('keydown', handleKey);
+    window.addEventListener('mousedown', handleClick);
+    return () => { window.removeEventListener('keydown', handleKey); window.removeEventListener('mousedown', handleClick); };
+  }, []);
+
+  // Time formatting
+  const hours = gameTime?.getHours() || 0;
+  const minutes = gameTime?.getMinutes() || 0;
+  const seconds = gameTime?.getSeconds() || 0;
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const dh = hours % 12 || 12;
+  const timeStr = `${dh}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${ampm}`;
+  const hourFloat = hours + minutes / 60;
+  const isDaytime = hourFloat >= 6 && hourFloat < 18;
+  const dateStr = gameTime?.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) || '';
+  const speedLabel = syncToReal ? 'EST' : `${timeSpeed}x`;
+
+  // Light counts
+  const lightValues = Object.values(roomLights);
+  const lightsOn = lightValues.filter(Boolean).length;
+  const lightsTotal = lightValues.length;
+
+  const aiEnabled = agenticState?.enabled || false;
 
   return (
-    <div style={{
-      marginTop: 8,
-      background: 'rgba(0,0,0,0.88)',
-      borderRadius: 8,
-      padding: '10px 14px',
-      minWidth: 190,
-      border: '1px solid rgba(255,215,0,0.25)',
-      backdropFilter: 'blur(8px)',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+    <div ref={dockRef} style={{
+      position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 30, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
     }}>
-      <div style={{ fontSize: 10, fontWeight: 'bold', color: '#FFD700', marginBottom: 6, letterSpacing: 1 }}>
-        PANELS
-      </div>
+      {/* ─── Flyout panels (render above the bar) ─── */}
 
-      {/* Show All / Hide All */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-        <button
-          onClick={() => toggleAll(true)}
-          style={{
-            flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
-            fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
-            border: allVisible ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
-            background: allVisible ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
-            color: allVisible ? '#FFD700' : '#888', transition: 'all 0.15s ease',
-          }}
-        >Show All</button>
-        <button
-          onClick={() => toggleAll(false)}
-          style={{
-            flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
-            fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
-            border: noneVisible ? '1px solid #FF6347' : '1px solid rgba(255,255,255,0.15)',
-            background: noneVisible ? 'rgba(255,99,71,0.15)' : 'rgba(255,255,255,0.05)',
-            color: noneVisible ? '#FF6347' : '#888', transition: 'all 0.15s ease',
-          }}
-        >Hide All</button>
-      </div>
+      {openFlyout === 'time' && (
+        <FlyoutPanel width={280}>
+          <FlyoutTitle>Time Controls</FlyoutTitle>
+          <div style={{ padding: '8px 12px' }}>
+            <div style={{ fontSize: 11, color: '#aaa', marginBottom: 4 }}>{dateStr}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 20, fontWeight: 'bold', color: '#FFD700', letterSpacing: 1 }}>{timeStr}</span>
+              <span style={{ fontSize: 20 }}>{isDaytime ? '☀' : '☾'}</span>
+            </div>
+            {/* Slider */}
+            <div style={{ marginBottom: 10 }}>
+              <input type="range" min={0} max={24} step={0.25} value={hourFloat}
+                onChange={(e) => onSetHour(parseFloat(e.target.value))}
+                style={{ width: '100%', cursor: 'pointer', accentColor: '#FFD700' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#555' }}>
+                <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+              </div>
+            </div>
+            {/* Speed */}
+            <div style={{ fontSize: 9, color: '#888', marginBottom: 4, letterSpacing: 1, fontWeight: 'bold' }}>SPEED</div>
+            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+              {[1, 10, 100, 1000].map(v => (
+                <DockPillBtn key={v} active={!syncToReal && timeSpeed === v} onClick={() => onSetTimeSpeed(v)}>{v}x</DockPillBtn>
+              ))}
+              <DockPillBtn active={syncToReal} onClick={onToggleSyncReal} color="#4ADE80">EST</DockPillBtn>
+            </div>
+          </div>
+        </FlyoutPanel>
+      )}
 
-      {/* Per-panel toggles */}
-      {PANEL_ITEMS.map(p => {
-        const on = panelVis[p.key];
-        return (
-          <button
-            key={p.key}
-            onClick={() => onToggle(p.key)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-              background: on ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.03)',
-              border: on ? '1px solid rgba(74,222,128,0.35)' : '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 4, padding: '5px 10px', marginBottom: 3, cursor: 'pointer',
-              fontFamily: '"Courier New", monospace', fontSize: 12,
-              color: on ? '#4ADE80' : '#555', transition: 'all 0.15s ease',
-            }}
-          >
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 16, height: 16, borderRadius: 3,
-              background: on ? '#4ADE80' : 'transparent',
-              border: on ? '1px solid #4ADE80' : '1px solid #555',
-              color: on ? '#000' : '#555',
-              fontSize: 10, fontWeight: 'bold', transition: 'all 0.15s ease',
-            }}>{on ? '*' : ''}</span>
-            <span style={{ fontSize: 12, color: on ? '#aaa' : '#444' }}>{p.icon}</span>
-            <span>{p.label}</span>
-          </button>
-        );
-      })}
+      {openFlyout === 'lights' && (
+        <FlyoutPanel width={260}>
+          <FlyoutTitle>Light Switches <span style={{ color: '#888', fontSize: 10, fontWeight: 'normal' }}>({lightsOn}/{lightsTotal})</span></FlyoutTitle>
+          <div style={{ padding: '6px 10px' }}>
+            {/* Master controls */}
+            <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
+              <DockPillBtn active={lightsOn === lightsTotal} onClick={onAllLightsOn}>All On</DockPillBtn>
+              <DockPillBtn active={lightsOn === 0} onClick={onAllLightsOff}>All Off</DockPillBtn>
+              <DockPillBtn active={lightsAuto} onClick={onToggleLightsAuto} color="#4ADE80">Auto</DockPillBtn>
+            </div>
+            {/* Per-room grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+              {ROOM_LIGHT_LABELS.map(r => {
+                const on = roomLights[r.id] !== false;
+                return (
+                  <button key={r.id} onClick={() => onToggleLight(r.id)} style={{
+                    display: 'flex', alignItems: 'center', gap: 5, padding: '4px 7px',
+                    borderRadius: 5, cursor: 'pointer', fontFamily: '"Courier New", monospace', fontSize: 10,
+                    background: on ? 'rgba(255,230,100,0.1)' : 'rgba(255,255,255,0.03)',
+                    border: on ? '1px solid rgba(255,230,100,0.3)' : '1px solid rgba(255,255,255,0.06)',
+                    color: on ? '#FFE664' : '#555', transition: 'all 0.12s ease',
+                  }}>
+                    <span style={{ fontSize: 12 }}>{r.icon}</span>
+                    <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: 4, flexShrink: 0,
+                      background: on ? '#FFE664' : '#333',
+                      boxShadow: on ? '0 0 4px rgba(255,230,100,0.6)' : 'none',
+                      transition: 'all 0.12s ease',
+                    }} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </FlyoutPanel>
+      )}
+
+      {openFlyout === 'camera' && (
+        <FlyoutPanel width={220}>
+          <FlyoutTitle>Camera & View</FlyoutTitle>
+          <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <FlyoutToggle on={firstPerson} onClick={onToggleFirstPerson} icon="👤" label="First Person" />
+            <FlyoutToggle on={cameraAutoRotate} onClick={onToggleAutoRotate} icon="🔄" label="Auto Rotate" disabled={firstPerson} />
+            <FlyoutToggle on={cameraTopDown} onClick={onToggleTopDown} icon="⬇" label="Top Down" disabled={firstPerson} />
+            <FlyoutToggle on={cameraLockOrientation} onClick={onToggleLockOrientation} icon="🔒" label="Lock Orient." disabled={!cameraTopDown || firstPerson} indent />
+            <FlyoutToggle on={autoCycleEnabled} onClick={onToggleAutoCycle} icon="🔁" label="Auto Cycle" disabled={firstPerson} />
+            {autoCycleEnabled && !firstPerson && (
+              <div style={{ display: 'flex', gap: 3, marginLeft: 24, flexWrap: 'wrap' }}>
+                {autoCycleIntervals.map(sec => (
+                  <DockPillBtn key={sec} active={sec === autoCycleInterval} onClick={() => onSetAutoCycleInterval(sec)} small>{sec}s</DockPillBtn>
+                ))}
+              </div>
+            )}
+            <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+            <div style={{ fontSize: 9, color: '#888', marginBottom: 2, letterSpacing: 1, fontWeight: 'bold' }}>VISIBILITY</div>
+            <FlyoutToggle on={visibility.walls} onClick={() => onToggleVisibility('walls')} icon="🧱" label="Walls" />
+            <FlyoutToggle on={visibility.doors} onClick={() => onToggleVisibility('doors')} icon="🚪" label="Doors" />
+            <FlyoutToggle on={visibility.furniture} onClick={() => onToggleVisibility('furniture')} icon="🪑" label="Furniture" />
+          </div>
+        </FlyoutPanel>
+      )}
+
+      {openFlyout === 'rooms' && (
+        <FlyoutPanel width={200}>
+          <FlyoutTitle>Room Legend</FlyoutTitle>
+          <div style={{ padding: '6px 10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+            {ROOM_LEGEND_DATA.map(r => {
+              const active = hoveredRoom?.id === r.id;
+              return (
+                <div key={r.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 5, padding: '3px 6px',
+                  borderRadius: 4,
+                  background: active ? 'rgba(74,222,128,0.12)' : 'transparent',
+                  transition: 'background 0.15s ease',
+                }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: 2, flexShrink: 0,
+                    background: active ? '#4ADE80' : r.color,
+                    border: active ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.2)',
+                    transition: 'all 0.15s ease',
+                  }} />
+                  <span style={{
+                    fontSize: 9, color: active ? '#4ADE80' : '#ccc',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    transition: 'color 0.15s ease',
+                  }}>{r.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </FlyoutPanel>
+      )}
+
+      {/* ─── The Dock Bar ─── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 2,
+        background: 'rgba(8, 8, 20, 0.92)', backdropFilter: 'blur(16px)',
+        borderRadius: 12, padding: '5px 6px',
+        border: '1px solid rgba(255, 215, 0, 0.12)',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)',
+        fontFamily: '"Courier New", monospace',
+      }}>
+        {/* Pause / Resume */}
+        <DockIconBtn
+          active={paused}
+          activeColor="#FF6347"
+          onClick={onTogglePaused}
+          title={paused ? 'Resume' : 'Pause'}
+        >
+          {paused ? '▶' : '⏸'}
+        </DockIconBtn>
+
+        <DockDivider />
+
+        {/* Time display (click to expand) */}
+        <DockIconBtn
+          active={openFlyout === 'time'}
+          onClick={() => toggle('time')}
+          title="Time controls"
+          wide
+        >
+          <span style={{ fontSize: 11, letterSpacing: 0.5 }}>{timeStr}</span>
+          <span style={{ fontSize: 12 }}>{isDaytime ? '☀' : '☾'}</span>
+        </DockIconBtn>
+
+        {/* Speed indicator pill */}
+        <span style={{
+          padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 'bold',
+          background: syncToReal ? 'rgba(74,222,128,0.15)' : 'rgba(255,215,0,0.12)',
+          color: syncToReal ? '#4ADE80' : '#FFD700',
+          border: syncToReal ? '1px solid rgba(74,222,128,0.3)' : '1px solid rgba(255,215,0,0.25)',
+          letterSpacing: 0.5,
+        }}>{speedLabel}</span>
+
+        <DockDivider />
+
+        {/* Lights */}
+        <DockIconBtn
+          active={openFlyout === 'lights'}
+          onClick={() => toggle('lights')}
+          title="Light switches"
+        >
+          💡
+          <span style={{ fontSize: 8, color: lightsOn === lightsTotal ? '#FFE664' : '#888' }}>{lightsOn}</span>
+        </DockIconBtn>
+
+        {/* Camera */}
+        <DockIconBtn
+          active={openFlyout === 'camera'}
+          onClick={() => toggle('camera')}
+          title="Camera & visibility"
+        >
+          📷
+        </DockIconBtn>
+
+        {/* Rooms */}
+        <DockIconBtn
+          active={openFlyout === 'rooms'}
+          onClick={() => toggle('rooms')}
+          title="Room legend"
+        >
+          🗺
+        </DockIconBtn>
+
+        <DockDivider />
+
+        {/* AI Toggle */}
+        <DockIconBtn
+          active={aiEnabled}
+          activeColor="#4CAF50"
+          onClick={onToggleAgentic}
+          title={`AI ${aiEnabled ? 'ON' : 'OFF'}`}
+        >
+          🤖
+          <span style={{ fontSize: 8, fontWeight: 'bold', color: aiEnabled ? '#4CAF50' : '#666' }}>
+            {aiEnabled ? 'ON' : 'OFF'}
+          </span>
+        </DockIconBtn>
+
+        {/* Dashboard */}
+        <DockIconBtn
+          active={showConversations}
+          activeColor="#FFD700"
+          onClick={onToggleConversations}
+          title="AI Dashboard"
+        >
+          🧠
+        </DockIconBtn>
+      </div>
     </div>
   );
 }
 
+/* ── Dock sub-components ─────────────────────────────────────── */
+
+function DockIconBtn({ children, active, activeColor = '#FFD700', onClick, title, wide }) {
+  const baseColor = active ? activeColor : '#888';
+  return (
+    <button onClick={onClick} title={title} style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+      padding: wide ? '5px 10px' : '5px 8px',
+      borderRadius: 8, cursor: 'pointer',
+      background: active ? `${activeColor}18` : 'transparent',
+      border: active ? `1px solid ${activeColor}40` : '1px solid transparent',
+      color: baseColor, fontSize: 14,
+      fontFamily: '"Courier New", monospace',
+      transition: 'all 0.12s ease',
+      minWidth: wide ? undefined : 36, height: 32,
+    }}>{children}</button>
+  );
+}
+
+function DockDivider() {
+  return <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', margin: '0 2px', flexShrink: 0 }} />;
+}
+
+function FlyoutPanel({ children, width = 260 }) {
+  return (
+    <div style={{
+      width, background: 'rgba(10, 10, 25, 0.95)', backdropFilter: 'blur(16px)',
+      borderRadius: 10, border: '1px solid rgba(255, 215, 0, 0.15)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 1px rgba(255,215,0,0.1)',
+      overflow: 'hidden', fontFamily: '"Courier New", monospace', color: '#e0e0e0',
+      animation: 'dockFlyoutIn 0.12s ease',
+    }}>{children}</div>
+  );
+}
+
+function FlyoutTitle({ children }) {
+  return (
+    <div style={{
+      padding: '8px 12px 6px', fontSize: 10, fontWeight: 'bold',
+      color: '#FFD700', letterSpacing: 1, textTransform: 'uppercase',
+      borderBottom: '1px solid rgba(255,255,255,0.06)',
+    }}>{children}</div>
+  );
+}
+
+function FlyoutToggle({ on, onClick, icon, label, disabled, indent }) {
+  return (
+    <button onClick={disabled ? undefined : onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      padding: '4px 8px', borderRadius: 5, cursor: disabled ? 'default' : 'pointer',
+      fontFamily: '"Courier New", monospace', fontSize: 11,
+      marginLeft: indent ? 16 : 0,
+      opacity: disabled ? 0.35 : 1,
+      background: on && !disabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.03)',
+      border: on && !disabled ? '1px solid rgba(74,222,128,0.3)' : '1px solid rgba(255,255,255,0.06)',
+      color: on && !disabled ? '#4ADE80' : '#777',
+      transition: 'all 0.12s ease',
+    }}>
+      <span style={{
+        width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: on && !disabled ? '#4ADE80' : 'transparent',
+        border: on && !disabled ? '1px solid #4ADE80' : '1px solid #555',
+        color: on && !disabled ? '#000' : '#555', fontSize: 9, fontWeight: 'bold',
+        transition: 'all 0.12s ease',
+      }}>{on && !disabled ? '✓' : ''}</span>
+      <span style={{ fontSize: 12 }}>{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function DockPillBtn({ children, active, onClick, color = '#FFD700', small }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: small ? '2px 6px' : '3px 8px', borderRadius: 4, cursor: 'pointer',
+      fontFamily: '"Courier New", monospace', fontSize: small ? 9 : 10, fontWeight: 'bold',
+      border: active ? `1px solid ${color}` : '1px solid rgba(255,255,255,0.12)',
+      background: active ? `${color}22` : 'rgba(255,255,255,0.04)',
+      color: active ? color : '#777', transition: 'all 0.12s ease',
+    }}>{children}</button>
+  );
+}
+
+/* ── Room hover indicator (bottom center, above dock) ────────── */
+
 function RoomHoverIndicator({ room }) {
   return (
     <div style={{
-      position: 'absolute',
-      bottom: 20,
-      left: '50%',
-      transform: 'translateX(-50%)',
-      zIndex: 10,
-      fontFamily: '"Courier New", monospace',
-      transition: 'opacity 0.2s ease',
-      opacity: room ? 1 : 0,
-      pointerEvents: 'none'
+      position: 'absolute', bottom: 70, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 25, fontFamily: '"Courier New", monospace',
+      transition: 'opacity 0.2s ease', opacity: room ? 1 : 0, pointerEvents: 'none',
     }}>
       <div style={{
-        background: 'rgba(0,0,0,0.75)',
-        borderRadius: 8,
-        padding: '8px 20px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        border: room ? `2px solid ${room?.color || '#555'}` : '2px solid transparent',
-        boxShadow: room ? `0 0 12px ${room?.color}44` : 'none'
+        background: 'rgba(0,0,0,0.8)', borderRadius: 8, padding: '6px 16px',
+        display: 'flex', alignItems: 'center', gap: 8,
+        border: room ? `1px solid ${room?.color || '#555'}` : '1px solid transparent',
+        boxShadow: room ? `0 0 10px ${room?.color}33` : 'none',
       }}>
         <span style={{
-          display: 'inline-block',
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
-          background: '#4ADE80',
-          boxShadow: '0 0 6px #4ADE80'
+          width: 8, height: 8, borderRadius: '50%',
+          background: '#4ADE80', boxShadow: '0 0 4px #4ADE80',
         }} />
-        <span style={{ color: '#4ADE80', fontSize: 14, fontWeight: 'bold', letterSpacing: 1 }}>
+        <span style={{ color: '#4ADE80', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 }}>
           {room?.name || ''}
         </span>
       </div>
@@ -1010,412 +1229,28 @@ function RoomHoverIndicator({ room }) {
   );
 }
 
-function RoomLegend({ hoveredRoom }) {
-  const rooms = [
-    { id: 'living_room', name: 'Living Room', color: '#8B7355' },
-    { id: 'kitchen', name: 'Kitchen', color: '#D2B48C' },
-    { id: 'bedroom_master', name: 'Master Bedroom', color: '#6B8E23' },
-    { id: 'bedroom_kids_shared', name: 'Shared Kids Room', color: '#4682B4' },
-    { id: 'bedroom_kids_single', name: 'Kids Room', color: '#5B9BD5' },
-    { id: 'bathroom', name: 'Bathroom', color: '#B0C4DE' },
-    { id: 'laundry', name: 'Laundry Room', color: '#C4AEAD' },
-    { id: 'hallway', name: 'Hallway', color: '#A0522D' },
-    { id: 'garage', name: 'Garage', color: '#808080' },
-    { id: 'closet_master', name: 'Master Closet', color: '#B8A88A' },
-    { id: 'closet_kids', name: 'Kids Closet', color: '#C9A6D8' },
-    { id: 'backyard', name: 'Backyard', color: '#5dba6a' }
-  ];
+/* ── Furniture tooltip ───────────────────────────────────────── */
 
-  return (
-    <div style={{
-      position: 'absolute',
-      bottom: 20,
-      right: 20,
-      zIndex: 10,
-      background: 'rgba(0,0,0,0.7)',
-      borderRadius: 8,
-      padding: '12px 16px',
-      color: '#fff',
-      fontFamily: '"Courier New", monospace',
-      fontSize: 11
-    }}>
-      <div style={{ marginBottom: 6, fontWeight: 'bold', color: '#FFD700' }}>Rooms</div>
-      {rooms.map(r => {
-        const isActive = hoveredRoom?.id === r.id;
-        return (
-          <div key={r.name} style={{
-            display: 'flex',
-            alignItems: 'center',
-            marginBottom: 3,
-            padding: '2px 4px',
-            borderRadius: 3,
-            background: isActive ? 'rgba(74, 222, 128, 0.15)' : 'transparent',
-            transition: 'background 0.2s ease'
-          }}>
-            <span style={{
-              display: 'inline-block',
-              width: 12,
-              height: 12,
-              background: isActive ? '#4ADE80' : r.color,
-              borderRadius: 2,
-              marginRight: 8,
-              border: isActive ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.3)',
-              transition: 'all 0.2s ease'
-            }} />
-            <span style={{ color: isActive ? '#4ADE80' : '#fff', transition: 'color 0.2s ease' }}>
-              {r.name}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════════
- *  LightSwitchPanel – per-room light toggle, top-left below title
- * ════════════════════════════════════════════════════════════════ */
-
-const ROOM_LIGHT_LABELS = [
-  { id: 'living_room', label: 'Living Room', icon: '\uD83D\uDECB' },
-  { id: 'kitchen', label: 'Kitchen', icon: '\uD83C\uDF73' },
-  { id: 'hallway', label: 'Hallway', icon: '\uD83D\uDEAA' },
-  { id: 'bedroom_master', label: 'Master Bed', icon: '\uD83D\uDECF' },
-  { id: 'bathroom', label: 'Bathroom', icon: '\uD83D\uDEC1' },
-  { id: 'laundry', label: 'Laundry', icon: '\uD83E\uDDFA' },
-  { id: 'bedroom_kids_shared', label: 'Kids Shared', icon: '\uD83E\uDDF8' },
-  { id: 'bedroom_kids_single', label: 'Kids Room', icon: '\uD83C\uDFA8' },
-  { id: 'garage', label: 'Garage', icon: '\uD83D\uDE97' },
-  { id: 'closet_master', label: 'Master Closet', icon: '\uD83D\uDC54' },
-  { id: 'closet_kids', label: 'Kids Closet', icon: '\uD83D\uDC57' },
-  { id: '_exterior', label: 'Exterior', icon: '\uD83C\uDFE0' },
-];
-
-const LightSwitchPanel = React.memo(function LightSwitchPanel({ roomLights, onToggle, onAllOn, onAllOff, lightsAuto, onToggleAuto }) {
-  const allOn = Object.values(roomLights).every(Boolean);
-  const allOff = Object.values(roomLights).every(v => !v);
-
-  return (
-    <div style={{
-      position: 'absolute', top: 90, left: 20, zIndex: 10,
-      background: 'rgba(0,0,0,0.82)', borderRadius: 10,
-      padding: '10px 14px', minWidth: 180,
-      fontFamily: '"Courier New", monospace', color: '#fff',
-      border: '1px solid rgba(255,215,0,0.15)', backdropFilter: 'blur(6px)',
-      maxHeight: 'calc(100vh - 120px)', overflowY: 'auto',
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#FFD700', marginBottom: 6, letterSpacing: 1 }}>
-        LIGHT SWITCHES
-      </div>
-
-      {/* Master controls */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-        <button onClick={onAllOn} style={lightMasterBtnStyle(!allOff && allOn)}>All On</button>
-        <button onClick={onAllOff} style={lightMasterBtnStyle(allOff)}>All Off</button>
-        <button onClick={onToggleAuto} style={{
-          ...lightMasterBtnStyle(lightsAuto),
-          border: lightsAuto ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
-          color: lightsAuto ? '#4ADE80' : '#888',
-          background: lightsAuto ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)',
-        }}>Auto</button>
-      </div>
-
-      {/* Per-room toggles */}
-      {ROOM_LIGHT_LABELS.map(r => {
-        const on = roomLights[r.id] !== false;
-        return (
-          <button
-            key={r.id}
-            onClick={() => onToggle(r.id)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-              background: on ? 'rgba(255,230,100,0.1)' : 'rgba(255,255,255,0.03)',
-              border: on ? '1px solid rgba(255,230,100,0.35)' : '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 4, padding: '3px 8px', marginBottom: 2, cursor: 'pointer',
-              fontFamily: '"Courier New", monospace', fontSize: 11,
-              color: on ? '#FFE664' : '#555', transition: 'all 0.15s ease',
-            }}
-          >
-            <span style={{ fontSize: 13 }}>{r.icon}</span>
-            <span style={{ flex: 1, textAlign: 'left' }}>{r.label}</span>
-            <span style={{
-              width: 14, height: 14, borderRadius: 7,
-              background: on ? '#FFE664' : '#333',
-              border: on ? '1px solid #FFD700' : '1px solid #444',
-              boxShadow: on ? '0 0 6px rgba(255,230,100,0.5)' : 'none',
-              transition: 'all 0.15s ease',
-            }} />
-          </button>
-        );
-      })}
-    </div>
-  );
-});
-
-const lightMasterBtnStyle = (active) => ({
-  flex: 1, padding: '4px 6px', borderRadius: 4, cursor: 'pointer',
-  fontFamily: '"Courier New", monospace', fontSize: 10, fontWeight: 'bold',
-  border: active ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
-  background: active ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
-  color: active ? '#FFD700' : '#888', transition: 'all 0.15s ease',
-});
-
-const ControlsPanel = React.memo(function ControlsPanel({
-  visibility, onToggleVisibility,
-  cameraAutoRotate, onToggleAutoRotate,
-  cameraTopDown, onToggleTopDown,
-  cameraLockOrientation, onToggleLockOrientation,
-  firstPerson, onToggleFirstPerson,
-  autoCycleEnabled, onToggleAutoCycle,
-  autoCycleInterval, autoCycleIntervals, onSetAutoCycleInterval
-}) {
-  const btnStyle = (on) => ({
-    display: 'flex', alignItems: 'center', gap: 8,
-    background: on ? 'rgba(74, 222, 128, 0.15)' : 'rgba(255,255,255,0.05)',
-    border: on ? '1px solid rgba(74, 222, 128, 0.4)' : '1px solid rgba(255,255,255,0.15)',
-    borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
-    color: on ? '#4ADE80' : '#777',
-    fontFamily: '"Courier New", monospace', fontSize: 12,
-    transition: 'all 0.15s ease', minWidth: 120
-  });
-
-  const checkStyle = (on) => ({
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 18, height: 18, borderRadius: 3,
-    background: on ? '#4ADE80' : 'transparent',
-    border: on ? '1px solid #4ADE80' : '1px solid #555',
-    color: on ? '#000' : '#555',
-    fontSize: 11, fontWeight: 'bold',
-    transition: 'all 0.15s ease'
-  });
-
-  const ToggleBtn = ({ on, onClick, icon, label, disabled, indent }) => (
-    <button
-      onClick={disabled ? undefined : onClick}
-      style={{
-        ...btnStyle(on && !disabled),
-        ...(indent ? { marginLeft: 14 } : {}),
-        ...(disabled ? { opacity: 0.35, cursor: 'default' } : {})
-      }}
-    >
-      <span style={checkStyle(on && !disabled)}>{on && !disabled ? '*' : ''}</span>
-      <span style={{ fontSize: 13 }}>{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-
-  const SectionTitle = ({ children }) => (
-    <div style={{ fontSize: 11, fontWeight: 'bold', color: '#FFD700', marginBottom: 2, marginTop: 4, letterSpacing: 1 }}>
-      {children}
-    </div>
-  );
-
-  return (
-    <div style={{
-      position: 'absolute', bottom: 20, right: 235, zIndex: 10,
-      background: 'rgba(0,0,0,0.8)', borderRadius: 10,
-      padding: '12px 14px',
-      fontFamily: '"Courier New", monospace',
-      display: 'flex', flexDirection: 'column', gap: 5,
-      maxHeight: 'calc(100vh - 60px)', overflowY: 'auto',
-      backdropFilter: 'blur(6px)',
-      border: '1px solid rgba(255,215,0,0.15)'
-    }}>
-      {/* ── Camera ── */}
-      <SectionTitle>Camera</SectionTitle>
-      <ToggleBtn on={firstPerson} onClick={onToggleFirstPerson} icon="[FP]" label="First Person" />
-      <ToggleBtn on={cameraAutoRotate} onClick={onToggleAutoRotate} icon="[AR]" label="Auto Rotate" disabled={firstPerson} />
-      <ToggleBtn on={cameraTopDown} onClick={onToggleTopDown} icon="[TD]" label="Top Down" disabled={firstPerson} />
-      <ToggleBtn on={cameraLockOrientation} onClick={onToggleLockOrientation} icon="[LO]" label="Lock Orient." indent disabled={!cameraTopDown || firstPerson} />
-      <ToggleBtn on={autoCycleEnabled} onClick={onToggleAutoCycle} icon="[AC]" label="Auto Cycle" disabled={firstPerson} />
-      {autoCycleEnabled && !firstPerson && (
-        <div style={{ display: 'flex', gap: 4, marginLeft: 14, flexWrap: 'wrap' }}>
-          {autoCycleIntervals.map(sec => (
-            <button
-              key={sec}
-              onClick={() => onSetAutoCycleInterval(sec)}
-              style={{
-                padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
-                fontFamily: '"Courier New", monospace', fontSize: 11,
-                border: sec === autoCycleInterval ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
-                background: sec === autoCycleInterval ? 'rgba(74, 222, 128, 0.2)' : 'rgba(255,255,255,0.05)',
-                color: sec === autoCycleInterval ? '#4ADE80' : '#777',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              {sec}s
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ── Visibility ── */}
-      <SectionTitle>Visibility</SectionTitle>
-      <ToggleBtn on={visibility.walls} onClick={() => onToggleVisibility('walls')} icon="[W]" label="Walls" />
-      <ToggleBtn on={visibility.doors} onClick={() => onToggleVisibility('doors')} icon="[D]" label="Doors" />
-      <ToggleBtn on={visibility.furniture} onClick={() => onToggleVisibility('furniture')} icon="[F]" label="Furniture" />
-    </div>
-  );
-});
-
-/* ════════════════════════════════════════════════════════════════
- *  TimeHUD – top-right overlay: clock, date, slider, speed btns
- * ════════════════════════════════════════════════════════════════ */
-
-const TimeHUD = React.memo(function TimeHUD({ gameTime, timeSpeed, syncToReal, paused, onSetTimeSpeed, onToggleSyncReal, onSetHour, onTogglePaused }) {
-  if (!gameTime) return null;
-
-  const hours   = gameTime.getHours();
-  const minutes = gameTime.getMinutes();
-  const seconds = gameTime.getSeconds();
-  const ampm    = hours >= 12 ? 'PM' : 'AM';
-  const dh      = hours % 12 || 12;
-  const timeStr = `${dh}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${ampm}`;
-  const dateStr = gameTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-  const hourFloat = hours + minutes / 60;
-  const isDaytime = hourFloat >= 6 && hourFloat < 18;
-
-  const speedBtn = (label, value) => {
-    const active = !syncToReal && timeSpeed === value;
-    return (
-      <button
-        key={value}
-        onClick={() => onSetTimeSpeed(value)}
-        style={{
-          padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
-          fontFamily: '"Courier New", monospace', fontSize: 11,
-          border: active ? '1px solid #FFD700' : '1px solid rgba(255,255,255,0.15)',
-          background: active ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)',
-          color: active ? '#FFD700' : '#888', transition: 'all 0.15s ease'
-        }}
-      >{label}</button>
-    );
-  };
-
-  return (
-    <div style={{
-      position: 'absolute', top: 20, right: 20, zIndex: 10,
-      background: 'rgba(0,0,0,0.82)', borderRadius: 10,
-      padding: '14px 18px', minWidth: 210,
-      fontFamily: '"Courier New", monospace', color: '#fff',
-      border: '1px solid rgba(255,215,0,0.15)', backdropFilter: 'blur(6px)',
-    }}>
-      {/* Date */}
-      <div style={{ fontSize: 11, color: '#aaa', marginBottom: 2 }}>{dateStr}</div>
-
-      {/* Clock + sun/moon icon */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 22, fontWeight: 'bold', color: '#FFD700', letterSpacing: 1 }}>{timeStr}</span>
-        <span style={{ fontSize: 22 }}>{isDaytime ? '\u2600' : '\u263E'}</span>
-      </div>
-
-      {/* Time-of-day slider */}
-      <div style={{ marginBottom: 10 }}>
-        <input
-          type="range" min={0} max={24} step={0.25} value={hourFloat}
-          onChange={(e) => onSetHour(parseFloat(e.target.value))}
-          style={{ width: '100%', cursor: 'pointer', accentColor: '#FFD700' }}
-        />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#555' }}>
-          <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
-        </div>
-      </div>
-
-      {/* Pause / Play */}
-      <div style={{ marginBottom: 8 }}>
-        <button
-          onClick={onTogglePaused}
-          style={{
-            width: '100%', padding: '5px 0', borderRadius: 5, cursor: 'pointer',
-            fontFamily: '"Courier New", monospace', fontSize: 12, fontWeight: 'bold',
-            border: paused ? '1px solid #FF6347' : '1px solid rgba(74,222,128,0.4)',
-            background: paused ? 'rgba(255,99,71,0.15)' : 'rgba(74,222,128,0.1)',
-            color: paused ? '#FF6347' : '#4ADE80', transition: 'all 0.15s ease',
-          }}
-        >
-          {paused ? '> RESUME' : '|| PAUSE'}
-        </button>
-      </div>
-
-      {/* Speed buttons */}
-      <div style={{ fontSize: 10, fontWeight: 'bold', color: '#FFD700', marginBottom: 4, letterSpacing: 1 }}>SPEED</div>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {speedBtn('1x', 1)}
-        {speedBtn('10x', 10)}
-        {speedBtn('100x', 100)}
-        {speedBtn('1000x', 1000)}
-        <button
-          onClick={onToggleSyncReal}
-          style={{
-            padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
-            fontFamily: '"Courier New", monospace', fontSize: 11,
-            border: syncToReal ? '1px solid #4ADE80' : '1px solid rgba(255,255,255,0.15)',
-            background: syncToReal ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.05)',
-            color: syncToReal ? '#4ADE80' : '#888', transition: 'all 0.15s ease',
-          }}
-        >EST</button>
-      </div>
-    </div>
-  );
-});
-
-/**
- * FurnitureTooltip - A small bubble that appears just above the cursor
- * when hovering over a piece of furniture in the 3D scene.
- */
 function FurnitureTooltip({ furniture }) {
   if (!furniture) return null;
-
   return (
-    <div
-      style={{
-        position: 'fixed',
-        left: furniture.screenX,
-        top: furniture.screenY - 48,
-        transform: 'translateX(-50%)',
-        zIndex: 100,
-        pointerEvents: 'none',
-        animation: 'tooltipFadeIn 0.15s ease'
-      }}
-    >
+    <div style={{
+      position: 'fixed', left: furniture.screenX, top: furniture.screenY - 44,
+      transform: 'translateX(-50%)', zIndex: 100, pointerEvents: 'none',
+    }}>
       <div style={{
-        background: 'rgba(0, 0, 0, 0.85)',
-        borderRadius: 6,
-        padding: '5px 12px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        border: '1px solid rgba(255, 215, 0, 0.5)',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.6), 0 0 8px rgba(255,215,0,0.15)',
-        whiteSpace: 'nowrap'
+        background: 'rgba(0,0,0,0.88)', borderRadius: 6, padding: '4px 10px',
+        display: 'flex', alignItems: 'center', gap: 5,
+        border: '1px solid rgba(255,215,0,0.4)',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.6)',
+        whiteSpace: 'nowrap',
       }}>
-        <span style={{
-          display: 'inline-block',
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: '#FFD700',
-          boxShadow: '0 0 4px #FFD700'
-        }} />
-        <span style={{
-          color: '#FFD700',
-          fontSize: 12,
-          fontWeight: 'bold',
-          fontFamily: '"Courier New", monospace',
-          letterSpacing: 0.5
-        }}>
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#FFD700', boxShadow: '0 0 3px #FFD700' }} />
+        <span style={{ color: '#FFD700', fontSize: 11, fontWeight: 'bold', fontFamily: '"Courier New", monospace', letterSpacing: 0.5 }}>
           {furniture.label}
         </span>
       </div>
-      {/* Arrow pointing down */}
-      <div style={{
-        width: 0,
-        height: 0,
-        margin: '0 auto',
-        borderLeft: '6px solid transparent',
-        borderRight: '6px solid transparent',
-        borderTop: '6px solid rgba(0, 0, 0, 0.85)'
-      }} />
+      <div style={{ width: 0, height: 0, margin: '0 auto', borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '5px solid rgba(0,0,0,0.88)' }} />
     </div>
   );
 }

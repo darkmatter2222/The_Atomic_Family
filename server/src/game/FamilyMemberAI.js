@@ -28,6 +28,7 @@ const {
   getBodyAnimForInteraction
 } = require('./InteractionData');
 const { getBodyAnimSpeed, getBodyAnimFrameCount } = require('./ActivityAnimator');
+const logger = require('./SimulationLogger');
 
 // Create the walkable grid once
 const gridData = createWalkableGrid(2);
@@ -174,6 +175,9 @@ function getInteractionPosition(furnitureId) {
 
 /**
  * Snap to furniture center for "center" approach-side interactions.
+ * Uses activityY from furniture zones for correct vertical positioning
+ * (seat height for chairs, floor level for showers, submerged for pools, etc.)
+ * Falls back to 0 (floor level) if no activityY is defined.
  */
 function snapToFurnitureCenter(position, furnitureId) {
   const zone = FURNITURE_ZONES[furnitureId];
@@ -182,7 +186,8 @@ function snapToFurnitureCenter(position, furnitureId) {
   const furn = FURNITURE_MAP[furnitureId];
   if (!furn) return position;
 
-  return { x: furn.position.x, y: furn.size.h || 0, z: furn.position.z };
+  const y = zone.activityY !== undefined ? zone.activityY : 0;
+  return { x: furn.position.x, y, z: furn.position.z };
 }
 
 /**
@@ -247,10 +252,12 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
           updated.activityLabel = null;
           updated.activityAnim = 'walk';
           updated.targetFurniture = null;
+          logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'walking', reason: 'wander' });
         } else {
           updated.idleTimer = 0;
           updated.idleDuration = 0.5;
           updated.state = STATE.IDLE;
+          logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'idle', reason: 'wander_no_path' });
         }
         break;
       }
@@ -260,8 +267,18 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.idleTimer = 0;
         updated.idleDuration = 1;
         updated.state = STATE.IDLE;
+        logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'idle', reason: 'no_interaction' });
         break;
       }
+
+      // Log fallback AI decision
+      logger.logFallbackDecision({
+        character: updated.name,
+        interactionId: interaction.id,
+        label: interaction.label,
+        category: interaction.category,
+        reason: 'regular_ai',
+      });
 
       const dest = getInteractionPosition(interaction.furnitureId);
       if (!dest) {
@@ -273,6 +290,8 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.state = STATE.PERFORMING;
         updated.targetFurniture = null;
         updated.effectsApplied = 0;
+        logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'performing', reason: `no_furniture:${interaction.id}` });
+        logger.logActivityStart({ character: updated.name, interactionId: interaction.id, label: interaction.label, category: interaction.category, room: updated.currentRoom, duration: updated.interactionDuration });
         break;
       }
 
@@ -288,6 +307,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.activityAnim = 'walk';
         updated.targetFurniture = dest.atFurniture;
         updated.state = STATE.WALKING;
+        logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'walking', reason: `to:${interaction.id}` });
       } else {
         const dx = dest.x - updated.position.x;
         const dz = dest.z - updated.position.z;
@@ -304,10 +324,13 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
           updated.position = snapped;
           updated.state = STATE.PERFORMING;
           updated.effectsApplied = 0;
+          logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'performing', reason: `already_near:${interaction.id}` });
+          logger.logActivityStart({ character: updated.name, interactionId: interaction.id, label: interaction.label, category: interaction.category, room: updated.currentRoom, duration: updated.interactionDuration });
         } else {
           updated.state = STATE.IDLE;
           updated.idleTimer = 0;
           updated.idleDuration = 0.5;
+          logger.logStateTransition({ character: updated.name, from: 'choosing', to: 'idle', reason: `path_fail:${interaction.id}` });
         }
       }
       break;
@@ -324,6 +347,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
             updated.activityAnim = null;
             updated.idleTimer = 0;
             updated.animFrame = 0;
+            logger.logStateTransition({ character: updated.name, from: 'walking', to: 'choosing', reason: 'transit_complete', room: updated.currentRoom });
             break;
           }
           if (updated.targetFurniture) {
@@ -331,16 +355,24 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
             updated.position = snapped;
           }
           updated.interactionTimer = 0;
-          updated.interactionDuration = rollDuration(updated.currentInteraction) * 60;
+          // Plan steps use 50% of normal duration to keep characters moving.
+          // This applies to ALL steps in a plan — including step 1 (hasRemainingPlan).
+          const hasRemainingPlan = Array.isArray(updated.activityPlan) && updated.activityPlan.length > 0;
+          updated.interactionDuration = (updated._isPlanStep || hasRemainingPlan)
+            ? Math.max(30, rollDuration(updated.currentInteraction) * 60 * 0.5)
+            : rollDuration(updated.currentInteraction) * 60;
           updated.activityAnim = updated.currentInteraction.animation;
           updated.state = STATE.PERFORMING;
           updated.animFrame = 0;
           updated.effectsApplied = 0;
+          logger.logStateTransition({ character: updated.name, from: 'walking', to: 'performing', reason: `arrived:${updated.currentInteraction.id}` });
+          logger.logActivityStart({ character: updated.name, interactionId: updated.currentInteraction.id, label: updated.currentInteraction.label, category: updated.currentInteraction.category, room: updated.currentRoom, furniture: updated.targetFurniture, duration: updated.interactionDuration });
         } else {
           updated.state = STATE.IDLE;
           updated.idleTimer = 0;
           updated.idleDuration = 2 + Math.random() * 5;
           updated.animFrame = 0;
+          logger.logStateTransition({ character: updated.name, from: 'walking', to: 'idle', reason: 'wander_complete', room: updated.currentRoom });
         }
         break;
       }
@@ -368,7 +400,12 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
       }
 
       const room = getRoomAtPosition(updated.position.x, updated.position.z);
-      if (room) updated.currentRoom = room;
+      if (room && room !== updated.currentRoom) {
+        logger.logRoomChange({ character: updated.name, fromRoom: updated.currentRoom, toRoom: room, position: updated.position });
+        updated.currentRoom = room;
+      } else if (room) {
+        updated.currentRoom = room;
+      }
 
       updated.animTimer += deltaTime;
       if (updated.animTimer > 0.125) {
@@ -425,6 +462,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
             remaining
           );
         }
+        const finishedInteraction = updated.currentInteraction;
         updated.currentInteraction = null;
         updated.activityLabel = null;
         updated.activityAnim = null;
@@ -435,9 +473,134 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated.targetFurniture = null;
         updated.effectsApplied = 0;
         updated.position = { ...updated.position, y: 0 };
-        updated.state = STATE.IDLE;
-        updated.idleTimer = 0;
-        updated.idleDuration = 1 + Math.random() * 2;
+
+        // ── Activity Plan execution ──
+        // If the LLM provided a multi-step plan, execute the next step now.
+        // Do NOT go to IDLE between steps — walk directly to the next location.
+        let chained = false;
+        const remainingPlan = Array.isArray(updated.activityPlan) && updated.activityPlan.length > 0
+          ? [...updated.activityPlan] : [];
+
+        logger.logPlanChain({
+          event: 'plan_check',
+          character: updated.name,
+          interactionId: finishedInteraction ? finishedInteraction.id : null,
+          remainingPlan,
+        });
+
+        if (remainingPlan.length > 0) {
+          const nextStepId = remainingPlan[0];
+          const nextInteraction = INTERACTION_MAP[nextStepId];
+          if (nextInteraction) {
+            const newRemaining = remainingPlan.slice(1);
+            const dest = getInteractionPosition(nextInteraction.furnitureId);
+            if (dest) {
+              const startGrid = worldToGrid(updated.position.x, updated.position.z, gridData);
+              const endGrid = worldToGrid(dest.x, dest.z, gridData);
+              const rawPath = findPath(gridData.grid, startGrid, endGrid);
+              if (rawPath.length > 1) {
+                updated.path = smoothPath(rawPath, gridData);
+                updated.pathIndex = 0;
+                updated.currentInteraction = nextInteraction;
+                updated.activityLabel = nextInteraction.label;
+                updated.activityAnim = 'walk';
+                updated.targetFurniture = dest.atFurniture;
+                updated.activityPlan = newRemaining;
+                updated._isPlanStep = true;
+                updated.state = STATE.WALKING;
+                updated.effectsApplied = 0;
+                chained = true;
+                logger.logPlanChain({ event: 'plan_step_walk', character: updated.name, nextStep: nextStepId, dest, remainingPlan: newRemaining });
+              } else {
+                // Already close — start immediately
+                const snapped = snapToFurnitureCenter(updated.position, dest.atFurniture);
+                updated.position = snapped;
+                updated.currentInteraction = nextInteraction;
+                updated.interactionTimer = 0;
+                updated.interactionDuration = Math.max(30, rollDuration(nextInteraction) * 60 * 0.5);
+                updated.activityLabel = nextInteraction.label;
+                updated.activityAnim = nextInteraction.animation;
+                updated.targetFurniture = dest.atFurniture;
+                updated.activityPlan = newRemaining;
+                updated._isPlanStep = true;
+                updated.state = STATE.PERFORMING;
+                updated.effectsApplied = 0;
+                chained = true;
+                logger.logPlanChain({ event: 'plan_step_place', character: updated.name, nextStep: nextStepId, dest, remainingPlan: newRemaining, reason: 'already_close' });
+              }
+            } else {
+              // No furniture needed — perform in place
+              updated.currentInteraction = nextInteraction;
+              updated.interactionTimer = 0;
+              updated.interactionDuration = Math.max(30, rollDuration(nextInteraction) * 60 * 0.5);
+              updated.activityLabel = nextInteraction.label;
+              updated.activityAnim = nextInteraction.animation;
+              updated.targetFurniture = null;
+              updated.activityPlan = newRemaining;
+              updated._isPlanStep = true;
+              updated.state = STATE.PERFORMING;
+              updated.effectsApplied = 0;
+              chained = true;
+              logger.logPlanChain({ event: 'plan_step_place', character: updated.name, nextStep: nextStepId, remainingPlan: newRemaining, reason: 'no_furniture' });
+            }
+          } else {
+            logger.logPlanChain({ event: 'plan_step_fail', character: updated.name, nextStep: nextStepId, reason: 'interaction_not_found' });
+          }
+        }
+
+        // ── Fallback: JSON followUp (for backward compatibility) ──
+        if (!chained && finishedInteraction && finishedInteraction.followUp) {
+          const { interactionId: fuId, chance } = finishedInteraction.followUp;
+          if (Math.random() < (chance || 1.0)) {
+            const followUpInteraction = INTERACTION_MAP[fuId];
+            if (followUpInteraction) {
+              const dest = getInteractionPosition(followUpInteraction.furnitureId);
+              if (dest) {
+                const startGrid = worldToGrid(updated.position.x, updated.position.z, gridData);
+                const endGrid = worldToGrid(dest.x, dest.z, gridData);
+                const rawPath = findPath(gridData.grid, startGrid, endGrid);
+                if (rawPath.length > 1) {
+                  updated.path = smoothPath(rawPath, gridData);
+                  updated.pathIndex = 0;
+                  updated.currentInteraction = followUpInteraction;
+                  updated.activityLabel = followUpInteraction.label;
+                  updated.activityAnim = 'walk';
+                  updated.targetFurniture = dest.atFurniture;
+                  updated.activityPlan = [];
+                  updated._isPlanStep = false;
+                  updated.state = STATE.WALKING;
+                  updated.effectsApplied = 0;
+                  chained = true;
+                } else {
+                  const snapped = snapToFurnitureCenter(updated.position, dest.atFurniture);
+                  updated.position = snapped;
+                  updated.currentInteraction = followUpInteraction;
+                  updated.interactionTimer = 0;
+                  updated.interactionDuration = rollDuration(followUpInteraction) * 60;
+                  updated.activityLabel = followUpInteraction.label;
+                  updated.activityAnim = followUpInteraction.animation;
+                  updated.targetFurniture = dest.atFurniture;
+                  updated.activityPlan = [];
+                  updated._isPlanStep = false;
+                  updated.state = STATE.PERFORMING;
+                  updated.effectsApplied = 0;
+                  chained = true;
+                }
+              }
+            }
+          }
+        }
+
+        if (!chained) {
+          updated.activityPlan = [];
+          updated._isPlanStep = false;
+          updated.state = STATE.IDLE;
+          updated.idleTimer = 0;
+          updated.idleDuration = 1 + Math.random() * 2;
+        }
+
+        logger.logActivityEnd({ character: updated.name, interactionId: finishedInteraction ? finishedInteraction.id : null, label: finishedInteraction ? finishedInteraction.label : null, category: finishedInteraction ? finishedInteraction.category : null, room: updated.currentRoom, position: updated.position });
+        logger.logStateTransition({ character: updated.name, from: 'performing', to: chained ? updated.state : 'idle', reason: `activity_complete:${finishedInteraction ? finishedInteraction.id : 'unknown'}` });
       }
       break;
     }
@@ -449,6 +612,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
       updated.activityAnim = null;
       if (updated.idleTimer >= updated.idleDuration) {
         updated.state = STATE.CHOOSING;
+        logger.logStateTransition({ character: updated.name, from: 'idle', to: 'choosing', reason: 'idle_timer_done' });
       }
       break;
     }
@@ -471,6 +635,7 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
         updated._thinkingRealStart = null;
         updated._decisionHandlerAttached = false;
         updated.activityLabel = null;
+        logger.logStateTransition({ character: updated.name, from: 'thinking', to: 'choosing', reason: 'safety_timeout_15s' });
       }
       break;
     }
@@ -482,7 +647,8 @@ function updateFamilyMember(member, deltaTime, gameHour = 12) {
 /**
  * Command a family member to perform a specific interaction.
  */
-function commandFamilyMember(member, interactionId, createdActionData) {
+function commandFamilyMember(member, interactionId, createdActionData, plan) {
+  // plan: optional array of interaction IDs (full sequence, first = current step)
   // ── Handle dynamic navigation actions (go_to_[room]) ──
   if (interactionId && interactionId.startsWith('go_to_')) {
     const targetRoom = interactionId.replace('go_to_', '');
@@ -512,10 +678,12 @@ function commandFamilyMember(member, interactionId, createdActionData) {
       updated.activityAnim = 'walk';
       updated.targetFurniture = null;
       updated.state = STATE.WALKING;
+      logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'walking', reason: `go_to:${targetRoom}` });
     } else {
       // Already in or near the target room — just go idle
       updated.state = STATE.CHOOSING;
       updated.idleTimer = 0;
+      logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'choosing', reason: `already_near:${targetRoom}` });
     }
 
     return updated;
@@ -533,11 +701,28 @@ function commandFamilyMember(member, interactionId, createdActionData) {
     updated.targetFurniture = null;
     updated.state = STATE.PERFORMING;
     updated.effectsApplied = 0;
+    logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'performing', reason: `created_action:${createdActionData.id || 'custom'}` });
+    logger.logActivityStart({ character: updated.name, interactionId: createdActionData.id || 'custom', label: createdActionData.label, category: createdActionData.category || 'created', room: updated.currentRoom, duration: updated.interactionDuration });
     return updated;
   }
 
   const interaction = INTERACTION_MAP[interactionId];
   if (!interaction) return member;
+
+  // Use the LLM-provided plan if valid, otherwise fall back to the
+  // interaction's hardcoded chain. This ensures multi-step activities always
+  // produce visible movement even when the LLM doesn't generate a plan.
+  const effectivePlan = (plan && plan.length > 1) ? plan
+    : (interaction.chain && Array.isArray(interaction.chain) && interaction.chain.length > 1)
+      ? interaction.chain : null;
+
+  logger.logPlanChain({
+    event: 'plan_set',
+    character: member.name,
+    interactionId,
+    effectivePlan,
+    remainingPlan: effectivePlan ? effectivePlan.slice(1) : null,
+  });
 
   const updated = { ...member };
   updated.position = { ...updated.position, y: 0 };
@@ -547,12 +732,18 @@ function commandFamilyMember(member, interactionId, createdActionData) {
   if (!dest) {
     updated.currentInteraction = interaction;
     updated.interactionTimer = 0;
-    updated.interactionDuration = rollDuration(interaction) * 60;
+    updated.interactionDuration = effectivePlan
+      ? Math.max(30, rollDuration(interaction) * 60 * 0.5)
+      : rollDuration(interaction) * 60;
     updated.activityLabel = interaction.label;
     updated.activityAnim = interaction.animation;
     updated.targetFurniture = null;
+    updated.activityPlan = effectivePlan ? effectivePlan.slice(1) : [];
+    updated._isPlanStep = false;
     updated.state = STATE.PERFORMING;
     updated.effectsApplied = 0;
+    logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'performing', reason: `cmd_no_furniture:${interaction.id}` });
+    logger.logActivityStart({ character: updated.name, interactionId: interaction.id, label: interaction.label, category: interaction.category, room: updated.currentRoom, duration: updated.interactionDuration });
     return updated;
   }
 
@@ -567,7 +758,10 @@ function commandFamilyMember(member, interactionId, createdActionData) {
     updated.activityLabel = interaction.label;
     updated.activityAnim = 'walk';
     updated.targetFurniture = dest.atFurniture;
+    updated.activityPlan = effectivePlan ? effectivePlan.slice(1) : [];
+    updated._isPlanStep = false;
     updated.state = STATE.WALKING;
+    logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'walking', reason: `cmd_to:${interaction.id}` });
   } else {
     const snapped = snapToFurnitureCenter(updated.position, dest.atFurniture);
     updated.position = snapped;
@@ -577,8 +771,12 @@ function commandFamilyMember(member, interactionId, createdActionData) {
     updated.activityLabel = interaction.label;
     updated.activityAnim = interaction.animation;
     updated.targetFurniture = dest.atFurniture;
+    updated.activityPlan = effectivePlan ? effectivePlan.slice(1) : [];
+    updated._isPlanStep = false;
     updated.state = STATE.PERFORMING;
     updated.effectsApplied = 0;
+    logger.logStateTransition({ character: updated.name, from: member.state ? member.state.toLowerCase() : 'unknown', to: 'performing', reason: `cmd_already_near:${interaction.id}` });
+    logger.logActivityStart({ character: updated.name, interactionId: interaction.id, label: interaction.label, category: interaction.category, room: updated.currentRoom, furniture: dest.atFurniture, duration: updated.interactionDuration });
   }
 
   return updated;

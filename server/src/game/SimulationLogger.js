@@ -1,5 +1,5 @@
 /**
- * SimulationLogger.js — Rolling file logger for all LLM / agentic activity.
+ * SimulationLogger.js — Rolling file logger for ALL simulation activity.
  *
  * Writes structured JSON-lines to a rolling log file. When the file exceeds
  * MAX_FILE_SIZE it is rotated (renamed to .1, oldest deleted) and a new
@@ -11,7 +11,15 @@
  *   - Speech / dialogue (speaker, target, text, emotion, room)
  *   - Conversation threads (multi-turn exchanges between characters)
  *   - Interrupts (who interrupted whom, reason)
- *   - State transitions (character state changes driven by conversation)
+ *   - State transitions (ALL character state changes)
+ *   - Room changes (character entering/leaving rooms)
+ *   - Activity start/end (interactions beginning/completing)
+ *   - Light changes (auto, player, AI character)
+ *   - Bedtime/wake enforcement
+ *   - Speech suppression (guards that block speech)
+ *   - Decision rejections (anti-repetition, fallbacks)
+ *   - Needs critical thresholds
+ *   - Speed/pause changes
  *   - Errors (LLM timeouts, parse failures)
  *
  * File format:  One JSON object per line (JSON-Lines / .jsonl)
@@ -154,6 +162,161 @@ class SimulationLogger {
       event: type || 'generic',
       message,
       ...data,
+    });
+  }
+
+  /**
+   * Log activity chain / plan debugging events.
+   * event: 'plan_set' | 'plan_check' | 'plan_step_walk' | 'plan_step_place' | 'plan_step_fail' | 'plan_complete'
+   */
+  logPlanChain({ event, character, interactionId, effectivePlan, remainingPlan, nextStep, reason, dest }) {
+    this._write({
+      event,
+      character,
+      interactionId: interactionId || null,
+      effectivePlan: effectivePlan || null,
+      remainingPlan: remainingPlan || null,
+      nextStep: nextStep || null,
+      reason: reason || null,
+      dest: dest ? { x: Math.round(dest.x * 10) / 10, z: Math.round(dest.z * 10) / 10 } : null,
+    });
+  }
+
+  // ── New comprehensive logging methods ──────────────────────────
+
+  /**
+   * Log a room change (character entering a new room).
+   */
+  logRoomChange({ character, fromRoom, toRoom, position }) {
+    this._write({
+      event: 'room_change',
+      character,
+      fromRoom,
+      toRoom,
+      position: position ? { x: Math.round(position.x * 10) / 10, z: Math.round(position.z * 10) / 10 } : null,
+    });
+  }
+
+  /**
+   * Log an activity starting (character begins performing an interaction).
+   */
+  logActivityStart({ character, interactionId, label, category, room, furniture, duration }) {
+    this._write({
+      event: 'activity_start',
+      character,
+      interactionId,
+      label,
+      category,
+      room,
+      furniture: furniture || null,
+      duration: duration ? Math.round(duration) : null,
+    });
+  }
+
+  /**
+   * Log an activity ending (character finishes performing an interaction).
+   */
+  logActivityEnd({ character, interactionId, label, category, room, position }) {
+    this._write({
+      event: 'activity_end',
+      character,
+      interactionId,
+      label,
+      category,
+      room,
+      position: position ? { x: Math.round(position.x * 10) / 10, z: Math.round(position.z * 10) / 10 } : null,
+    });
+  }
+
+  /**
+   * Log a light state change.
+   */
+  logLightChange({ room, newState, trigger, character }) {
+    this._write({
+      event: 'light_change',
+      room,
+      newState,        // 'on' | 'off'
+      trigger,         // 'auto' | 'player' | 'character'
+      character: character || null,
+    });
+  }
+
+  /**
+   * Log a bedtime or wake enforcement event.
+   */
+  logBedtimeWake({ character, action, gameHour, trigger }) {
+    this._write({
+      event: 'bedtime_wake',
+      character,
+      action,          // 'bedtime_enforced' | 'bedtime_announced' | 'woke_up'
+      gameHour: Math.round(gameHour * 100) / 100,
+      trigger: trigger || null,
+    });
+  }
+
+  /**
+   * Log a speech suppression event (guards that block speech).
+   */
+  logSpeechSuppressed({ character, reason, target, room, speechSnippet }) {
+    this._write({
+      event: 'speech_suppressed',
+      character,
+      reason,
+      target: target || null,
+      room: room || null,
+      speechSnippet: speechSnippet ? speechSnippet.substring(0, 80) : null,
+    });
+  }
+
+  /**
+   * Log a decision rejection (anti-repetition or other guard).
+   */
+  logDecisionRejected({ character, action, reason, details }) {
+    this._write({
+      event: 'decision_rejected',
+      character,
+      action,
+      reason,
+      details: details || null,
+    });
+  }
+
+  /**
+   * Log a needs critical threshold crossing.
+   */
+  logNeedsCritical({ character, need, value, threshold }) {
+    this._write({
+      event: 'needs_critical',
+      character,
+      need,
+      value: Math.round(value * 10) / 10,
+      threshold,
+    });
+  }
+
+  /**
+   * Log a simulation control change (speed, pause, etc.)
+   */
+  logSimControl({ action, value, previousValue }) {
+    this._write({
+      event: 'sim_control',
+      action,          // 'speed_change' | 'pause' | 'resume' | 'sync_real' | 'time_override'
+      value,
+      previousValue: previousValue !== undefined ? previousValue : null,
+    });
+  }
+
+  /**
+   * Log a fallback AI decision (non-LLM random pick).
+   */
+  logFallbackDecision({ character, interactionId, label, category, reason }) {
+    this._write({
+      event: 'fallback_decision',
+      character,
+      interactionId,
+      label,
+      category,
+      reason: reason || 'regular_ai',
     });
   }
 
